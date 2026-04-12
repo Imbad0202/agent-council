@@ -5,6 +5,8 @@ import type {
   AgentConfig,
   CouncilConfig,
   ProviderResponse,
+  MemoryRecord,
+  PatternRecord,
 } from '../src/types.js';
 
 describe('types', () => {
@@ -47,5 +49,34 @@ describe('types', () => {
       tokensUsed: { input: 0, output: 0 },
     };
     expect(response.skip).toBe(true);
+  });
+
+  it('MemoryRecord has required fields', () => {
+    const record: MemoryRecord = {
+      id: 'huahua/sessions/council-session-2026-04-12-monorepo.md',
+      agentId: 'huahua',
+      type: 'session',
+      topic: 'monorepo',
+      confidence: 0.8,
+      outcome: 'decision',
+      usageCount: 3,
+      lastUsed: '2026-04-12',
+      createdAt: '2026-04-12',
+      contentPreview: 'Decided to use monorepo because...',
+    };
+    expect(record.type).toBe('session');
+    expect(record.usageCount).toBe(3);
+  });
+
+  it('PatternRecord has required fields', () => {
+    const pattern: PatternRecord = {
+      id: 1,
+      agentId: 'huahua',
+      topic: 'architecture',
+      behavior: 'tends toward conservative positions',
+      extractedFrom: 'principle-architecture.md',
+      createdAt: '2026-04-12',
+    };
+    expect(pattern.behavior).toContain('conservative');
   });
 });

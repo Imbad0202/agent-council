@@ -40,6 +40,8 @@ export interface CouncilConfig {
     default2Agents: AgentRole[];
     topicOverrides: Record<string, AgentRole[]>;
   };
+  memory?: MemoryConfig;
+  antiPattern?: AntiPatternConfig;
 }
 
 export interface ProviderMessage {
@@ -88,4 +90,44 @@ export interface SessionSummary {
   conclusion: string;
   perspectives: Record<string, string>;
   unresolvedDisagreements: string;
+}
+
+export interface MemoryRecord {
+  id: string;
+  agentId: string;
+  type: 'session' | 'principle' | 'archive';
+  topic: string | null;
+  confidence: number;
+  outcome: 'decision' | 'open' | 'deferred' | null;
+  usageCount: number;
+  lastUsed: string | null;
+  createdAt: string;
+  contentPreview: string;
+}
+
+export interface PatternRecord {
+  id: number;
+  agentId: string;
+  topic: string;
+  behavior: string;
+  extractedFrom: string;
+  createdAt: string;
+}
+
+export type PatternType = 'mirror' | 'fake_dissent' | 'quick_surrender' | 'authority_submission';
+
+export interface MemoryConfig {
+  dbPath: string;
+  sessionTimeoutMs: number;
+  endKeywords: string[];
+  archiveThreshold: number;
+  archiveBottomPercent: number;
+  consolidationThreshold: number;
+}
+
+export interface AntiPatternConfig {
+  enabled: boolean;
+  detectionModel: string;
+  startAfterTurn: number;
+  detectEveryNTurns: number;
 }
