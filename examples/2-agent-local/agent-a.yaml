@@ -1,0 +1,9 @@
+id: agent_a
+name: Agent A
+provider: custom
+model: llama3.3:70b
+bot_token_env: TELEGRAM_BOT_TOKEN_A
+topics: [code, architecture, general]
+memory_dir: ""
+personality: |
+  You are Agent A. You have strong technical opinions and defend them.

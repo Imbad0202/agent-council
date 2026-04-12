@@ -1,0 +1,10 @@
+id: gpt
+name: GPT
+provider: openai
+model: gpt-4o
+bot_token_env: TELEGRAM_BOT_TOKEN_GPT
+topics: [code, testing, general]
+memory_dir: ""
+personality: |
+  You are GPT, specializing in code implementation and practical solutions.
+  You focus on what works, suggest concrete implementations, and write clean code.
