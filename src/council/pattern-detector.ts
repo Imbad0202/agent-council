@@ -1,16 +1,10 @@
 import type { CouncilMessage, LLMProvider, AntiPatternConfig, PatternType } from '../types.js';
+import { PATTERN_INJECTION_PROMPTS } from './pattern-prompts.js';
 
 interface DetectionResult {
   pattern: PatternType;
   targetAgent: string;
 }
-
-const INJECTION_PROMPTS: Record<PatternType, string> = {
-  mirror: '你的回覆跟對方高度重疊。提出一個對方沒提到的面向。',
-  fake_dissent: '你聲稱不同意但結論一致。什麼情況下你會得出不同結論？',
-  quick_surrender: '你在一次反對後就改變立場。那個反對真的推翻了你的論點嗎？',
-  authority_submission: '你在人類表態後改變了觀點。請基於論點本身評估，不是因為人類同意了對方。',
-};
 
 export class PatternDetector {
   private config: AntiPatternConfig;
@@ -71,6 +65,6 @@ If no pattern is detected, both fields should be null.`,
   }
 
   getInjectionPrompt(pattern: PatternType): string {
-    return INJECTION_PROMPTS[pattern];
+    return PATTERN_INJECTION_PROMPTS[pattern];
   }
 }

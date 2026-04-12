@@ -78,6 +78,9 @@ export class MemoryDB {
         content_preview TEXT
       );
 
+      CREATE INDEX IF NOT EXISTS idx_memories_agent_type ON memories(agent_id, type);
+      CREATE INDEX IF NOT EXISTS idx_memories_agent_topic ON memories(agent_id, topic);
+
       CREATE TABLE IF NOT EXISTS patterns (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         agent_id TEXT NOT NULL,
@@ -175,6 +178,13 @@ export class MemoryDB {
 
   updateType(id: string, type: MemoryType): void {
     this.db.prepare('UPDATE memories SET type = ? WHERE id = ?').run(type, id);
+  }
+
+  listAllMemoriesByType(type: MemoryType): MemoryRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM memories WHERE type = ? ORDER BY confidence DESC, usage_count DESC')
+      .all(type) as MemoryRow[];
+    return rows.map(rowToRecord);
   }
 
   listMemories(agentId: string, type?: MemoryType): MemoryRecord[] {

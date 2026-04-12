@@ -19,6 +19,9 @@ export function loadAgentConfig(filePath: string): AgentConfig {
     personality: parsed.personality.trim(),
     botTokenEnv: parsed.bot_token_env,
     topics: parsed.topics,
+    roleType: parsed.role_type,
+    models: parsed.models,
+    defaultModelTier: parsed.default_model_tier,
   };
 }
 
@@ -63,5 +66,12 @@ export function loadCouncilConfig(filePath: string): CouncilConfig {
       recruitmentMessage: parsed.participation?.recruitment_message ?? true,
       listenerAgent: parsed.participation?.listener_agent ?? '',
     },
+    execution: parsed.execution ? {
+      enabled: parsed.execution.enabled ?? false,
+      maxConcurrentWorktrees: parsed.execution.max_concurrent_worktrees ?? 3,
+      executorTimeoutMs: parsed.execution.executor_timeout_ms ?? 300000,
+      autoDispatch: parsed.execution.auto_dispatch ?? true,
+      repoPath: parsed.execution.repo_path ?? '.',
+    } : undefined,
   };
 }

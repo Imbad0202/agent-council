@@ -77,16 +77,17 @@ export class MemoryConsolidator {
           'Analyze these discussion summaries and extract:',
           '1. A general principle (2-3 sentences) that captures the recurring conclusions and decisions.',
           '2. A behavioral pattern for the agent (one sentence): "tends toward [behavior] on [topic]"',
+          '3. Decision rules (array of strings): concrete rules in format "When encountering X, prioritize Y"',
           '',
           'Respond in JSON format:',
-          '{"principle": "...", "pattern": "..."}',
+          '{"principle": "...", "pattern": "...", "decision_rules": ["...", "..."]}',
           '',
           'Respond in the same language as the input.',
         ].join('\n'),
       },
     );
 
-    const parsed = JSON.parse(response.content) as { principle: string; pattern: string };
+    const parsed = JSON.parse(response.content) as { principle: string; pattern: string; decision_rules?: string[] };
 
     // 4. Save principle as markdown with frontmatter
     const principleDir = join(this.dataDir, agentId, 'principles');
@@ -124,6 +125,19 @@ export class MemoryConsolidator {
       contentPreview: parsed.principle,
     };
     this.db.insertMemory(principleRecord);
+
+    // 5b. Insert decision rules if extracted
+    const rules = parsed.decision_rules;
+    if (rules && rules.length > 0) {
+      for (let i = 0; i < rules.length; i++) {
+        const ruleId = `${agentId}/rules/rule-${topic}-${i + 1}.md`;
+        this.db.insertMemory({
+          id: ruleId, agentId, type: 'rule', topic, confidence: 0.85,
+          outcome: 'decision', usageCount: 0, lastUsed: now, createdAt: now,
+          contentPreview: rules[i],
+        });
+      }
+    }
 
     // 6. Insert pattern into brain.db patterns table
     this.db.insertPattern({

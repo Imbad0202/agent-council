@@ -66,4 +66,58 @@ describe('AgentWorker', () => {
     expect(worker.id).toBe('huahua');
     expect(worker.name).toBe('花花');
   });
+
+  describe('model tier resolution', () => {
+    it('uses complexity tier to select model when config has models map', async () => {
+      const tieredConfig: AgentConfig = {
+        ...agentConfig,
+        model: 'claude-haiku-3-5',
+        models: { low: 'claude-haiku-3-5', medium: 'claude-sonnet-4-5', high: 'claude-opus-4-6' },
+      };
+      const tieredWorker = new AgentWorker(tieredConfig, mockProvider, '/tmp/no-memory');
+      const messages: CouncilMessage[] = [
+        { id: 'msg-1', role: 'human', content: 'Complex question', timestamp: Date.now() },
+      ];
+
+      await tieredWorker.respond(messages, 'analyst', undefined, 'high');
+
+      const chatCall = vi.mocked(mockProvider.chat).mock.calls[0];
+      expect(chatCall[1].model).toBe('claude-opus-4-6');
+    });
+
+    it('falls back to config.model when no models map is defined', async () => {
+      const messages: CouncilMessage[] = [
+        { id: 'msg-1', role: 'human', content: 'Simple question', timestamp: Date.now() },
+      ];
+
+      await worker.respond(messages, 'analyst', undefined, 'high');
+
+      const chatCall = vi.mocked(mockProvider.chat).mock.calls[0];
+      expect(chatCall[1].model).toBe('claude-opus-4-6');
+    });
+
+    it('tracks model usage in stats after respond()', async () => {
+      const tieredConfig: AgentConfig = {
+        ...agentConfig,
+        model: 'claude-haiku-3-5',
+        models: { low: 'claude-haiku-3-5', medium: 'claude-sonnet-4-5', high: 'claude-opus-4-6' },
+      };
+      const tieredWorker = new AgentWorker(tieredConfig, mockProvider, '/tmp/no-memory');
+      const messages: CouncilMessage[] = [
+        { id: 'msg-1', role: 'human', content: 'Question', timestamp: Date.now() },
+      ];
+
+      await tieredWorker.respond(messages, 'analyst', undefined, 'high');
+      await tieredWorker.respond(messages, 'analyst', undefined, 'high');
+      await tieredWorker.respond(messages, 'analyst', undefined, 'low');
+
+      const stats = tieredWorker.getStats();
+      expect(stats.modelUsage['claude-opus-4-6']).toBeDefined();
+      expect(stats.modelUsage['claude-opus-4-6'].calls).toBe(2);
+      expect(stats.modelUsage['claude-opus-4-6'].inputTokens).toBe(400);
+      expect(stats.modelUsage['claude-opus-4-6'].outputTokens).toBe(160);
+      expect(stats.modelUsage['claude-haiku-3-5']).toBeDefined();
+      expect(stats.modelUsage['claude-haiku-3-5'].calls).toBe(1);
+    });
+  });
 });

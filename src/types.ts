@@ -1,5 +1,11 @@
 export type AgentRole = 'advocate' | 'critic' | 'analyst' | 'synthesizer' | 'author' | 'reviewer';
 
+export type IntentType = 'deliberation' | 'quick-answer' | 'implementation' | 'investigation' | 'meta';
+export type Complexity = 'low' | 'medium' | 'high';
+export type FacilitatorAction = 'steer' | 'challenge' | 'summarize' | 'escalate' | 'structure' | 'end';
+export type DebateStructure = 'free' | 'structured' | 'round-robin';
+export type ResponseClassification = 'opposition' | 'conditional' | 'agreement';
+
 export interface CouncilMessage {
   id: string;
   role: 'human' | 'agent';
@@ -24,6 +30,9 @@ export interface AgentConfig {
   personality: string;
   botTokenEnv?: string;
   topics?: string[];
+  roleType?: 'peer' | 'facilitator';
+  models?: { low: string; medium: string; high: string };
+  defaultModelTier?: Complexity;
 }
 
 export interface CouncilConfig {
@@ -46,6 +55,7 @@ export interface CouncilConfig {
   memory?: MemoryConfig;
   antiPattern?: AntiPatternConfig;
   participation?: ParticipationConfig;
+  execution?: ExecutionConfig;
 }
 
 export interface ProviderMessage {
@@ -81,6 +91,7 @@ export interface AgentStats {
   disagreementRate: number;
   averageLength: number;
   skipCount: number;
+  modelUsage: Record<string, { calls: number; inputTokens: number; outputTokens: number }>;
 }
 
 export interface SessionSummary {
@@ -99,7 +110,7 @@ export interface SessionSummary {
 export interface MemoryRecord {
   id: string;
   agentId: string;
-  type: 'session' | 'principle' | 'archive';
+  type: 'session' | 'principle' | 'rule' | 'archive';
   topic: string | null;
   confidence: number;
   outcome: 'decision' | 'open' | 'deferred' | null;
@@ -141,4 +152,23 @@ export interface ParticipationConfig {
   minAgentsPerTurn: number;
   recruitmentMessage: boolean;
   listenerAgent: string;
+}
+
+export interface ExecutionConfig {
+  enabled: boolean;
+  maxConcurrentWorktrees: number;
+  executorTimeoutMs: number;
+  autoDispatch: boolean;
+  repoPath: string;
+}
+
+export interface ExecutionTask {
+  id: string;
+  description: string;
+  assignedAgent: string;
+  worktreePath: string;
+  branch: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  result?: { diff: string; filesChanged: string[]; commitHash: string };
+  error?: string;
 }
