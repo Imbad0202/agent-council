@@ -56,29 +56,35 @@ async function main() {
   console.log(`Group chat ID: ${groupChatId}`);
   console.log(`Memory sync path: ${memorySyncPath}`);
 
-  // Clear any stale long-polling connections before starting
+  // Clear any stale long-polling connections before starting.
+  // Telegram holds long-poll connections for up to 30s. A short getUpdates
+  // with timeout=1 will either succeed (claiming the slot) or fail with 409
+  // (meaning a stale connection exists). We retry until we get a clean slot.
   await bot.api.deleteWebhook({ drop_pending_updates: true });
 
-  // Retry logic: Telegram may hold a stale long-poll for up to 30s after a crash
-  const MAX_RETRIES = 3;
-  const RETRY_DELAY_MS = 10_000;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  console.log('Waiting for clean Telegram polling slot...');
+  for (let attempt = 1; attempt <= 6; attempt++) {
     try {
-      await bot.start({
-        drop_pending_updates: true,
-        onStart: () => console.log('Agent Council is running! Send a message in the Telegram group.'),
-      });
+      await bot.api.raw.getUpdates({ offset: -1, limit: 1, timeout: 1 });
+      console.log('Polling slot acquired.');
       break;
     } catch (err: unknown) {
       const isConflict = err instanceof Error && err.message.includes('409');
-      if (isConflict && attempt < MAX_RETRIES) {
-        console.log(`Telegram polling conflict (attempt ${attempt}/${MAX_RETRIES}), retrying in ${RETRY_DELAY_MS / 1000}s...`);
-        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      if (isConflict && attempt < 6) {
+        console.log(`  Stale connection detected (attempt ${attempt}/6), waiting 5s...`);
+        await new Promise((r) => setTimeout(r, 5_000));
+      } else if (!isConflict) {
+        break; // Non-conflict error, proceed anyway
       } else {
-        throw err;
+        console.log('  Could not acquire clean slot after 6 attempts, starting anyway...');
       }
     }
   }
+
+  await bot.start({
+    drop_pending_updates: true,
+    onStart: () => console.log('Agent Council is running! Send a message in the Telegram group.'),
+  });
 }
 
 main().catch((err) => {
