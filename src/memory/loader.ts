@@ -1,5 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import type { MemoryDB } from './db.js';
+import type { MemoryRecord } from '../types.js';
 
 export interface MemoryEntry {
   filename: string;
@@ -8,9 +10,24 @@ export interface MemoryEntry {
 
 export class MemorySyncLoader {
   private basePath: string;
+  private db: MemoryDB | null = null;
 
   constructor(memorySyncPath: string) {
     this.basePath = memorySyncPath;
+  }
+
+  setDB(db: MemoryDB): void {
+    this.db = db;
+  }
+
+  searchMemories(query: string): MemoryRecord[] {
+    if (!this.db) return [];
+    return this.db.searchMemories(query);
+  }
+
+  getMemoryMeta(id: string): MemoryRecord | null {
+    if (!this.db) return null;
+    return this.db.getMemory(id);
   }
 
   loadIndex(memoryDir: string): string {

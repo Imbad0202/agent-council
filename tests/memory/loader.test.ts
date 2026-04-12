@@ -63,4 +63,10 @@ No AI slop. No dash abuse.
     expect(all[0].filename).toBe('feedback_writing.md');
     expect(all[1].filename).toBe('user_profile.md');
   });
+
+  it('has progressive disclosure methods', () => {
+    // searchMemories and getMemoryMeta return empty/null without DB
+    expect(loader.searchMemories('test')).toEqual([]);
+    expect(loader.getMemoryMeta('test.md')).toBeNull();
+  });
 });
