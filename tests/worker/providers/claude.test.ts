@@ -55,4 +55,45 @@ describe('ClaudeProvider', () => {
     expect(typeof summary).toBe('string');
     expect(summary.length).toBeGreaterThan(0);
   });
+
+  describe('chatWithFallback', () => {
+    it('falls back to next model on 429 error', async () => {
+      const messages: ProviderMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const options = { model: 'claude-opus-4-6', systemPrompt: 'You are helpful.' };
+
+      const rateLimitError = Object.assign(new Error('Rate limited'), { status: 429 });
+      const successResponse = {
+        content: 'Fallback response',
+        tokensUsed: { input: 50, output: 20 },
+      };
+
+      const chatSpy = vi.spyOn(provider, 'chat')
+        .mockRejectedValueOnce(rateLimitError)
+        .mockResolvedValueOnce(successResponse);
+
+      const response = await provider.chatWithFallback(messages, options, ['claude-haiku-3-5']);
+
+      expect(chatSpy).toHaveBeenCalledTimes(2);
+      expect(chatSpy).toHaveBeenNthCalledWith(1, messages, { ...options, model: 'claude-opus-4-6' });
+      expect(chatSpy).toHaveBeenNthCalledWith(2, messages, { ...options, model: 'claude-haiku-3-5' });
+      expect(response.content).toBe('Fallback response');
+    });
+
+    it('throws when all models are exhausted', async () => {
+      const messages: ProviderMessage[] = [
+        { role: 'user', content: 'Hello' },
+      ];
+      const options = { model: 'claude-opus-4-6', systemPrompt: 'You are helpful.' };
+
+      const rateLimitError = Object.assign(new Error('Rate limited'), { status: 429 });
+
+      vi.spyOn(provider, 'chat').mockRejectedValue(rateLimitError);
+
+      await expect(
+        provider.chatWithFallback(messages, options, ['claude-haiku-3-5']),
+      ).rejects.toThrow();
+    });
+  });
 });

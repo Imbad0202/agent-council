@@ -44,3 +44,10 @@ participation:
   min_agents_per_turn: 2
   recruitment_message: true
   listener_agent: huahua
+
+execution:
+  enabled: true
+  max_concurrent_worktrees: 3
+  executor_timeout_ms: 300000
+  auto_dispatch: true
+  repo_path: .

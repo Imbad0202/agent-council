@@ -4,13 +4,18 @@ import { readdirSync } from 'node:fs';
 import { loadAgentConfig, loadCouncilConfig } from './config.js';
 import { createProvider } from './worker/providers/factory.js';
 import { AgentWorker } from './worker/agent-worker.js';
-import { GatewayRouter } from './gateway/router.js';
 import { BotManager } from './telegram/bot.js';
 import { MemoryDB } from './memory/db.js';
 import { UsageTracker } from './memory/tracker.js';
-import { SessionLifecycle } from './memory/lifecycle.js';
-import { PatternDetector } from './council/pattern-detector.js';
 import { ParticipationManager } from './council/participation.js';
+import { EventBus } from './events/bus.js';
+import { GatewayRouter } from './gateway/router.js';
+import { IntentGate } from './council/intent-gate.js';
+import { DeliberationHandler } from './council/deliberation.js';
+import { FacilitatorAgent } from './council/facilitator.js';
+import { ActiveRecall } from './memory/active-recall.js';
+import { ExecutionDispatcher } from './execution/dispatcher.js';
+import { ExecutionReviewer } from './execution/reviewer.js';
 import type { LLMProvider } from './types.js';
 
 async function main() {
@@ -27,7 +32,11 @@ async function main() {
   const agentFiles = readdirSync(agentConfigDir).filter((f) => f.endsWith('.yaml'));
   const agentConfigs = agentFiles.map((f) => loadAgentConfig(resolve(agentConfigDir, f)));
 
-  console.log(`Loaded ${agentConfigs.length} agents: ${agentConfigs.map((a) => `${a.name}(${a.provider})`).join(', ')}`);
+  console.log(`[v0.2.0] Loaded ${agentConfigs.length} agents: ${agentConfigs.map((a) => `${a.name}(${a.provider})`).join(', ')}`);
+
+  // Split agents into peers and facilitator
+  const peerConfigs = agentConfigs.filter((a) => a.roleType !== 'facilitator');
+  const facilitatorConfig = agentConfigs.find((a) => a.roleType === 'facilitator');
 
   // Cache providers so agents sharing a provider reuse the same client instance
   const providerCache = new Map<string, LLMProvider>();
@@ -38,13 +47,20 @@ async function main() {
     return providerCache.get(name)!;
   }
 
-  // Create per-agent providers (each agent can use different LLM)
-  const workers = agentConfigs.map((config) => {
+  // Create peer workers (deliberation participants)
+  const peerWorkers = peerConfigs.map((config) => {
     const provider = getOrCreateProvider(config.provider);
     return new AgentWorker(config, provider, memorySyncPath ?? '');
   });
 
-  // Bot manager: one bot per agent
+  // Create facilitator worker (if configured)
+  let facilitatorWorker: AgentWorker | undefined;
+  if (facilitatorConfig) {
+    const provider = getOrCreateProvider(facilitatorConfig.provider);
+    facilitatorWorker = new AgentWorker(facilitatorConfig, provider, memorySyncPath ?? '');
+  }
+
+  // Bot manager: one bot per agent (all agents including facilitator)
   const listenerAgent = councilConfig.participation?.listenerAgent || agentConfigs[0].id;
   const botManager = new BotManager({
     groupChatId,
@@ -54,50 +70,75 @@ async function main() {
 
   console.log(`Bot manager: ${botManager.getBotCount()} bots, listener: ${listenerAgent}`);
 
-  // Router with multi-bot send function
-  const router = new GatewayRouter(workers, councilConfig, async (agentId, content, threadId) => {
+  // Multi-bot send function
+  const sendFn = async (agentId: string, content: string, threadId?: number) => {
     const agentName = agentConfigs.find((a) => a.id === agentId)?.name ?? agentId;
     await botManager.sendMessage(agentId, agentName, content, threadId);
-  });
+  };
+
+  // ── Event-driven wiring ──────────────────────────────────────────────
+
+  const bus = new EventBus();
+
+  // Infrastructure: main provider for classification & decomposition
+  const mainProvider = getOrCreateProvider(agentConfigs[0].provider);
+
+  // Classification layer
+  new IntentGate(bus, mainProvider);
+  console.log('IntentGate initialized');
+
+  // Memory layer
+  if (councilConfig.memory) {
+    const memoryDb = new MemoryDB(resolve(councilConfig.memory.dbPath));
+    const activeRecall = new ActiveRecall(bus, memoryDb);
+    const tracker = new UsageTracker(memoryDb);
+
+    // Track memory references from agent responses
+    bus.on('agent.responded', (payload) => {
+      const refs = tracker.extractReferences(payload.response.content);
+      if (refs.length > 0) tracker.trackReferences(refs);
+    });
+
+    console.log('Memory modules initialized (ActiveRecall + UsageTracker)');
+    // Keep references alive to prevent GC
+    void activeRecall;
+  }
+
+  // Deliberation layer
+  new DeliberationHandler(bus, peerWorkers, councilConfig, sendFn);
+  console.log('DeliberationHandler initialized');
 
   // Participation manager
   if (councilConfig.participation) {
     const participationManager = new ParticipationManager(councilConfig.participation, agentConfigs);
-    router.setParticipation(participationManager);
     console.log('Participation manager initialized');
+    void participationManager;
   }
 
-  // Phase 2: Memory modules
-  if (councilConfig.memory) {
-    const dataDir = resolve('data');
-    const mainProvider = getOrCreateProvider(agentConfigs[0].provider);
-    const memoryDb = new MemoryDB(resolve(councilConfig.memory.dbPath));
-    const tracker = new UsageTracker(memoryDb);
-    const lifecycle = new SessionLifecycle(councilConfig.memory, mainProvider, agentConfigs[0].model);
-    const patternDetector = new PatternDetector(
-      councilConfig.antiPattern ?? { enabled: false, detectionModel: '', startAfterTurn: 3, detectEveryNTurns: 2 },
-      mainProvider,
-    );
-
-    router.setPhase2({
-      db: memoryDb,
-      tracker,
-      lifecycle,
-      patternDetector,
-      provider: mainProvider,
-      dataDir,
-      summaryModel: agentConfigs[0].model,
-    });
-
-    console.log('Phase 2 modules initialized');
+  // Facilitation layer (if facilitator config exists)
+  if (facilitatorWorker) {
+    new FacilitatorAgent(bus, facilitatorWorker);
+    console.log('FacilitatorAgent initialized');
   }
 
-  // Setup listener and start
+  // Execution layer (if enabled)
+  if (councilConfig.execution?.enabled) {
+    new ExecutionDispatcher(bus, councilConfig.execution, mainProvider);
+    new ExecutionReviewer(bus, sendFn);
+    console.log('Execution modules initialized (Dispatcher + Reviewer)');
+  }
+
+  // Gateway (thin router)
+  const router = new GatewayRouter(bus, sendFn, councilConfig);
+  console.log('GatewayRouter initialized (event-driven)');
+
+  // ── Telegram startup ─────────────────────────────────────────────────
+
   botManager.setupListener(router);
 
   const listenerBot = botManager.getListenerBot();
 
-  console.log('Agent Council starting...');
+  console.log('Agent Council v0.2.0 starting...');
   console.log(`Group chat ID: ${groupChatId}`);
 
   await listenerBot.api.deleteWebhook({ drop_pending_updates: true });
@@ -123,7 +164,7 @@ async function main() {
 
   await listenerBot.start({
     drop_pending_updates: true,
-    onStart: () => console.log('Agent Council is running! Send a message in the Telegram group.'),
+    onStart: () => console.log('Agent Council v0.2.0 is running! Send a message in the Telegram group.'),
   });
 }
 

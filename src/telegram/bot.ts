@@ -1,7 +1,6 @@
 import { Bot } from 'grammy';
-import type { GatewayRouter } from '../gateway/router.js';
 import { createCouncilMessageFromTelegram } from './handlers.js';
-import type { AgentConfig } from '../types.js';
+import type { AgentConfig, CouncilMessage } from '../types.js';
 
 interface MultiBotConfig {
   groupChatId: number;
@@ -38,7 +37,7 @@ export class BotManager {
     }
   }
 
-  setupListener(router: GatewayRouter): void {
+  setupListener(handler: { handleHumanMessage: (msg: CouncilMessage) => void }): void {
     const listenerBot = this.bots.get(this.listenerAgentId);
     if (!listenerBot) {
       throw new Error(`Listener bot not found for agent: ${this.listenerAgentId}`);
@@ -49,7 +48,7 @@ export class BotManager {
       if (ctx.from?.is_bot) return;
 
       const councilMsg = createCouncilMessageFromTelegram(ctx.message);
-      await router.handleHumanMessage(councilMsg);
+      handler.handleHumanMessage(councilMsg);
     });
   }
 

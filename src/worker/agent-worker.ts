@@ -2,6 +2,7 @@ import type {
   AgentConfig,
   AgentRole,
   AgentStats,
+  Complexity,
   CouncilMessage,
   LLMProvider,
   ProviderMessage,
@@ -31,10 +32,21 @@ export class AgentWorker {
     this.memorySyncPath = memorySyncPath;
   }
 
+  private resolveModel(complexity?: Complexity): string {
+    if (complexity && this.config.models) {
+      return this.config.models[complexity];
+    }
+    if (this.config.defaultModelTier && this.config.models) {
+      return this.config.models[this.config.defaultModelTier];
+    }
+    return this.config.model;
+  }
+
   async respond(
     conversationHistory: CouncilMessage[],
     role: AgentRole,
     challengePrompt?: string,
+    complexity?: Complexity,
   ): Promise<ProviderResponse> {
     const systemPrompt = buildSystemPrompt(this.config, this.memorySyncPath, role);
 
@@ -52,8 +64,10 @@ export class AgentWorker {
       messages.push({ role: 'user', content: `[System]: ${challengePrompt}` });
     }
 
+    const model = this.resolveModel(complexity);
+
     const response = await this.provider.chat(messages, {
-      model: this.config.model,
+      model,
       systemPrompt,
     });
 
@@ -64,6 +78,13 @@ export class AgentWorker {
     if (response.skip) {
       this.stats.skipCount++;
     }
+
+    if (!this.stats.modelUsage[model]) {
+      this.stats.modelUsage[model] = { calls: 0, inputTokens: 0, outputTokens: 0 };
+    }
+    this.stats.modelUsage[model].calls++;
+    this.stats.modelUsage[model].inputTokens += response.tokensUsed.input;
+    this.stats.modelUsage[model].outputTokens += response.tokensUsed.output;
 
     return response;
   }
