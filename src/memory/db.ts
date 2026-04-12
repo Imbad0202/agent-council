@@ -177,6 +177,13 @@ export class MemoryDB {
     this.db.prepare('UPDATE memories SET type = ? WHERE id = ?').run(type, id);
   }
 
+  listAllMemoriesByType(type: MemoryType): MemoryRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM memories WHERE type = ? ORDER BY confidence DESC, usage_count DESC')
+      .all(type) as MemoryRow[];
+    return rows.map(rowToRecord);
+  }
+
   listMemories(agentId: string, type?: MemoryType): MemoryRecord[] {
     if (type) {
       const rows = this.db

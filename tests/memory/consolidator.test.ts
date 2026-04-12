@@ -25,6 +25,29 @@ const mockLLM: LLMProvider = {
   },
 };
 
+const mockLLMWithRules: LLMProvider = {
+  name: 'mock-rules',
+  async chat(_messages: ProviderMessage[], _options: ChatOptions): Promise<ProviderResponse> {
+    return {
+      content: JSON.stringify({
+        principle: 'Our architecture principle: favor simplicity.',
+        pattern: 'tends toward conservative positions on architecture',
+        decision_rules: [
+          'When encountering scale requirements, prioritize horizontal scaling.',
+          'When encountering new dependencies, prioritize security review.',
+        ],
+      }),
+      tokensUsed: { input: 100, output: 60 },
+    };
+  },
+  async summarize(_text: string, _model: string): Promise<string> {
+    return 'summary';
+  },
+  estimateTokens(_messages: ProviderMessage[]): number {
+    return 100;
+  },
+};
+
 describe('MemoryConsolidator', () => {
   const testDir = join(tmpdir(), 'agent-council-consolidator-test');
   const testDbPath = join(testDir, 'brain.db');
@@ -123,5 +146,28 @@ describe('MemoryConsolidator', () => {
     // So the topic should no longer be consolidatable
     const topics = consolidator.getConsolidatableTopics('huahua', 3);
     expect(topics).toEqual([]);
+  });
+
+  it('extracts decision rules from consolidation', async () => {
+    const consolidatorWithRules = new MemoryConsolidator(db, dataDir, mockLLMWithRules, 'mock-model');
+
+    await consolidatorWithRules.consolidate('huahua', 'architecture');
+
+    // Rule records should be inserted with type='rule' and confidence=0.85
+    const rules = db.listMemories('huahua', 'rule');
+    expect(rules.length).toBe(2);
+
+    const rule1 = rules.find(r => r.id === 'huahua/rules/rule-architecture-1.md');
+    expect(rule1).toBeDefined();
+    expect(rule1!.type).toBe('rule');
+    expect(rule1!.confidence).toBe(0.85);
+    expect(rule1!.topic).toBe('architecture');
+    expect(rule1!.contentPreview).toBe('When encountering scale requirements, prioritize horizontal scaling.');
+
+    const rule2 = rules.find(r => r.id === 'huahua/rules/rule-architecture-2.md');
+    expect(rule2).toBeDefined();
+    expect(rule2!.type).toBe('rule');
+    expect(rule2!.confidence).toBe(0.85);
+    expect(rule2!.contentPreview).toBe('When encountering new dependencies, prioritize security review.');
   });
 });
