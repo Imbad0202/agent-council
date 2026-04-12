@@ -7,6 +7,7 @@ export interface CouncilMessage {
   content: string;
   timestamp: number;
   replyTo?: string;
+  threadId?: number;
   metadata?: {
     assignedRole?: AgentRole;
     confidence?: number;
@@ -21,6 +22,8 @@ export interface AgentConfig {
   model: string;
   memoryDir: string;
   personality: string;
+  botTokenEnv?: string;
+  topics?: string[];
 }
 
 export interface CouncilConfig {
@@ -42,6 +45,7 @@ export interface CouncilConfig {
   };
   memory?: MemoryConfig;
   antiPattern?: AntiPatternConfig;
+  participation?: ParticipationConfig;
 }
 
 export interface ProviderMessage {
@@ -130,4 +134,11 @@ export interface AntiPatternConfig {
   detectionModel: string;
   startAfterTurn: number;
   detectEveryNTurns: number;
+}
+
+export interface ParticipationConfig {
+  maxAgentsPerTurn: number;
+  minAgentsPerTurn: number;
+  recruitmentMessage: boolean;
+  listenerAgent: string;
 }

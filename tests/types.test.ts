@@ -7,6 +7,7 @@ import type {
   ProviderResponse,
   MemoryRecord,
   PatternRecord,
+  ParticipationConfig,
 } from '../src/types.js';
 
 describe('types', () => {
@@ -78,5 +79,31 @@ describe('types', () => {
       createdAt: '2026-04-12',
     };
     expect(pattern.behavior).toContain('conservative');
+  });
+
+  it('AgentConfig supports botTokenEnv and topics', () => {
+    const config: AgentConfig = {
+      id: 'test',
+      name: 'Test',
+      provider: 'claude',
+      model: 'claude-opus-4-6',
+      memoryDir: 'test/global',
+      personality: 'You are test.',
+      botTokenEnv: 'TELEGRAM_BOT_TOKEN_TEST',
+      topics: ['code', 'architecture'],
+    };
+    expect(config.botTokenEnv).toBe('TELEGRAM_BOT_TOKEN_TEST');
+    expect(config.topics).toContain('code');
+  });
+
+  it('CouncilMessage supports threadId', () => {
+    const msg: CouncilMessage = {
+      id: 'msg-1',
+      role: 'human',
+      content: 'test',
+      timestamp: Date.now(),
+      threadId: 12345,
+    };
+    expect(msg.threadId).toBe(12345);
   });
 });
