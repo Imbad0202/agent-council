@@ -5,7 +5,7 @@ import { loadAgentConfig, loadCouncilConfig } from './config.js';
 import { ClaudeProvider } from './worker/providers/claude.js';
 import { AgentWorker } from './worker/agent-worker.js';
 import { GatewayRouter } from './gateway/router.js';
-import { createBot } from './telegram/bot.js';
+import { createBot, getLastMessageThreadId } from './telegram/bot.js';
 
 async function main() {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -46,7 +46,10 @@ async function main() {
   sendToTelegram = async (agentId: string, content: string) => {
     const agentName = agentNames[agentId] ?? agentId;
     const formatted = `\u{1F916} ${agentName}\n\n${content}`;
-    await bot.api.sendMessage(groupChatId, formatted);
+    const threadId = getLastMessageThreadId();
+    await bot.api.sendMessage(groupChatId, formatted, {
+      ...(threadId ? { message_thread_id: threadId } : {}),
+    });
   };
 
   console.log('Agent Council starting...');
