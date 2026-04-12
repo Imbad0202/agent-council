@@ -55,6 +55,50 @@ personality: |
       expect(config.botTokenEnv).toBe('TELEGRAM_BOT_TOKEN_TEST');
       expect(config.topics).toEqual(['code', 'architecture']);
     });
+
+    it('parses roleType and models from YAML', () => {
+      const yamlContent = `
+id: facilitatorbot
+name: FacilitatorBot
+provider: claude
+model: claude-opus-4-6
+memory_dir: FacilitatorBot/global
+role_type: facilitator
+models:
+  low: claude-haiku-4-5-20251001
+  medium: claude-sonnet-4-5
+  high: claude-opus-4-6
+default_model_tier: medium
+personality: |
+  You are a facilitator.
+`;
+      writeFileSync(join(testDir, 'agents', 'facilitator.yaml'), yamlContent);
+      const config = loadAgentConfig(join(testDir, 'agents', 'facilitator.yaml'));
+      expect(config.roleType).toBe('facilitator');
+      expect(config.models).toEqual({
+        low: 'claude-haiku-4-5-20251001',
+        medium: 'claude-sonnet-4-5',
+        high: 'claude-opus-4-6',
+      });
+      expect(config.defaultModelTier).toBe('medium');
+    });
+
+    it('defaults roleType to undefined when not set (backwards compat)', () => {
+      const yamlContent = `
+id: peerbot
+name: PeerBot
+provider: claude
+model: claude-opus-4-6
+memory_dir: PeerBot/global
+personality: |
+  You are a peer agent.
+`;
+      writeFileSync(join(testDir, 'agents', 'peerbot.yaml'), yamlContent);
+      const config = loadAgentConfig(join(testDir, 'agents', 'peerbot.yaml'));
+      expect(config.roleType).toBeUndefined();
+      expect(config.models).toBeUndefined();
+      expect(config.defaultModelTier).toBeUndefined();
+    });
   });
 
   describe('loadCouncilConfig', () => {
@@ -148,6 +192,59 @@ participation:
       expect(config.participation?.maxAgentsPerTurn).toBe(4);
       expect(config.participation?.recruitmentMessage).toBe(false);
       expect(config.participation?.listenerAgent).toBe('huahua');
+    });
+
+    it('parses execution config', () => {
+      const yamlContent = `
+gateway:
+  thinking_window_ms: 3000
+  random_delay_ms: [1000, 2000]
+  max_inter_agent_rounds: 2
+  context_window_turns: 8
+  session_max_turns: 15
+anti_sycophancy:
+  disagreement_threshold: 0.2
+  consecutive_low_rounds: 3
+  challenge_angles: [cost, risk]
+roles:
+  default_2_agents: [advocate, critic]
+  topic_overrides: {}
+execution:
+  enabled: true
+  max_concurrent_worktrees: 5
+  executor_timeout_ms: 600000
+  auto_dispatch: false
+  repo_path: /projects/myrepo
+`;
+      writeFileSync(join(testDir, 'council4.yaml'), yamlContent);
+      const config = loadCouncilConfig(join(testDir, 'council4.yaml'));
+      expect(config.execution).toBeDefined();
+      expect(config.execution?.enabled).toBe(true);
+      expect(config.execution?.maxConcurrentWorktrees).toBe(5);
+      expect(config.execution?.executorTimeoutMs).toBe(600000);
+      expect(config.execution?.autoDispatch).toBe(false);
+      expect(config.execution?.repoPath).toBe('/projects/myrepo');
+    });
+
+    it('defaults execution to undefined when missing', () => {
+      const yamlContent = `
+gateway:
+  thinking_window_ms: 3000
+  random_delay_ms: [1000, 2000]
+  max_inter_agent_rounds: 2
+  context_window_turns: 8
+  session_max_turns: 15
+anti_sycophancy:
+  disagreement_threshold: 0.2
+  consecutive_low_rounds: 3
+  challenge_angles: [cost, risk]
+roles:
+  default_2_agents: [advocate, critic]
+  topic_overrides: {}
+`;
+      writeFileSync(join(testDir, 'council5.yaml'), yamlContent);
+      const config = loadCouncilConfig(join(testDir, 'council5.yaml'));
+      expect(config.execution).toBeUndefined();
     });
   });
 });
