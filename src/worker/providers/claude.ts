@@ -1,11 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { LLMProvider, ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
+import type { ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
+import { BaseProvider } from './base.js';
 
-export class ClaudeProvider implements LLMProvider {
+export class ClaudeProvider extends BaseProvider {
   readonly name = 'claude';
   private client: Anthropic;
 
   constructor(apiKey: string) {
+    super();
+    this.charsPerToken = 3;
     this.client = new Anthropic({ apiKey });
   }
 
@@ -35,23 +38,5 @@ export class ClaudeProvider implements LLMProvider {
         output: response.usage.output_tokens,
       },
     };
-  }
-
-  async summarize(text: string, model: string): Promise<string> {
-    const response = await this.chat(
-      [{ role: 'user', content: text }],
-      {
-        model,
-        systemPrompt: 'Summarize the following discussion concisely in 200-300 words. Capture key conclusions, differing perspectives, and unresolved points. Respond in the same language as the input.',
-        maxTokens: 1024,
-        temperature: 0.3,
-      },
-    );
-    return response.content;
-  }
-
-  estimateTokens(messages: ProviderMessage[]): number {
-    const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
-    return Math.ceil(totalChars / 3);
   }
 }

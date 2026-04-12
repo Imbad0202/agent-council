@@ -1,14 +1,5 @@
 import type { AgentConfig, ParticipationConfig } from '../types.js';
-
-// Reuse topic keywords from role-assigner (or import a shared list)
-const TOPIC_KEYWORDS: Record<string, string[]> = {
-  code: ['code', 'implement', 'function', 'bug', 'refactor', 'review', 'PR', 'commit', 'test', 'debug', 'API'],
-  strategy: ['strategy', 'plan', 'approach', 'decide', 'choose', 'direction', 'roadmap', 'priority'],
-  research: ['research', 'paper', 'study', 'evidence', 'data', 'analysis', 'literature'],
-  architecture: ['architecture', 'design', 'pattern', 'structure', 'module', 'component', 'system'],
-  risk: ['risk', 'security', 'vulnerability', 'threat', 'audit', 'compliance'],
-  testing: ['test', 'qa', 'quality', 'coverage', 'regression', 'integration'],
-};
+import { detectTopics } from './topics.js';
 
 interface ParticipationChange {
   joining: string[];    // agent IDs joining
@@ -28,7 +19,7 @@ export class ParticipationManager {
    * Select which agents should participate in this turn.
    */
   selectParticipants(message: string): string[] {
-    const detectedTopics = this.detectTopics(message);
+    const detectedTopics = detectTopics(message);
 
     // Score each agent by topic match
     const scored = this.allAgents.map((agent) => {
@@ -86,19 +77,5 @@ export class ParticipationManager {
     });
 
     return { joining, leaving };
-  }
-
-  private detectTopics(message: string): string[] {
-    const lower = message.toLowerCase();
-    const matched: string[] = [];
-
-    for (const [topic, keywords] of Object.entries(TOPIC_KEYWORDS)) {
-      const count = keywords.filter((kw) => lower.includes(kw.toLowerCase())).length;
-      if (count > 0) {
-        matched.push(topic);
-      }
-    }
-
-    return matched;
   }
 }

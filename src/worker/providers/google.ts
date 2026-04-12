@@ -1,11 +1,13 @@
 import { GoogleGenAI } from '@google/genai';
-import type { LLMProvider, ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
+import type { ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
+import { BaseProvider } from './base.js';
 
-export class GoogleProvider implements LLMProvider {
+export class GoogleProvider extends BaseProvider {
   readonly name = 'google';
   private client: GoogleGenAI;
 
   constructor(apiKey: string) {
+    super();
     this.client = new GoogleGenAI({ apiKey });
   }
 
@@ -36,23 +38,5 @@ export class GoogleProvider implements LLMProvider {
         output: response.usageMetadata?.candidatesTokenCount ?? 0,
       },
     };
-  }
-
-  async summarize(text: string, model: string): Promise<string> {
-    const response = await this.chat(
-      [{ role: 'user', content: text }],
-      {
-        model,
-        systemPrompt: 'Summarize the following discussion concisely in 200-300 words. Capture key conclusions, differing perspectives, and unresolved points. Respond in the same language as the input.',
-        maxTokens: 1024,
-        temperature: 0.3,
-      },
-    );
-    return response.content;
-  }
-
-  estimateTokens(messages: ProviderMessage[]): number {
-    const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
-    return Math.ceil(totalChars / 4);
   }
 }

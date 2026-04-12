@@ -28,12 +28,12 @@ export class GatewayRouter {
   private config: CouncilConfig;
   private sessions: Map<number, SessionState> = new Map();
   private sendFn: SendFn;
-  private currentRoles: Record<string, AgentRole> = {};
   private usageTracker: UsageTracker | null = null;
   private lifecycle: SessionLifecycle | null = null;
   private patternDetector: PatternDetector | null = null;
   private memoryDb: MemoryDB | null = null;
   private provider: LLMProvider | null = null;
+  private summaryModel: string = 'claude-opus-4-6';
   private dataDir: string | null = null;
   private participationManager: ParticipationManager | null = null;
 
@@ -50,6 +50,7 @@ export class GatewayRouter {
     patternDetector: PatternDetector;
     provider: LLMProvider;
     dataDir: string;
+    summaryModel: string;
   }): void {
     this.memoryDb = deps.db;
     this.usageTracker = deps.tracker;
@@ -57,6 +58,7 @@ export class GatewayRouter {
     this.patternDetector = deps.patternDetector;
     this.provider = deps.provider;
     this.dataDir = deps.dataDir;
+    this.summaryModel = deps.summaryModel;
   }
 
   setParticipation(manager: ParticipationManager): void {
@@ -130,12 +132,13 @@ export class GatewayRouter {
     }
 
     const agentIds = activeWorkers.map((w) => w.id);
-    this.currentRoles = assignRoles(agentIds, message.content, this.config);
-    console.log(`[Roles] ${Object.entries(this.currentRoles).map(([id, role]) => `${id}=${role}`).join(', ')}`);
+    const patterns = this.memoryDb?.getPatterns?.(activeWorkers[0]?.id) ?? [];
+    const currentRoles = assignRoles(agentIds, message.content, this.config, patterns);
+    console.log(`[Roles] ${Object.entries(currentRoles).map(([id, role]) => `${id}=${role}`).join(', ')}`);
 
     const responses = await Promise.all(
       activeWorkers.map(async (worker) => {
-        const role = this.currentRoles[worker.id];
+        const role = currentRoles[worker.id];
 
         const lastAgentMsg = [...session.conversationHistory]
           .reverse()
@@ -183,7 +186,7 @@ export class GatewayRouter {
         timestamp: Date.now(),
         threadId,
         metadata: {
-          assignedRole: this.currentRoles[worker.id],
+          assignedRole: currentRoles[worker.id],
           confidence: response.confidence,
           references: response.references,
         },
@@ -256,7 +259,7 @@ export class GatewayRouter {
     if (session.conversationHistory.length < 2) return;
 
     const agentIds = this.workers.map((w) => w.id);
-    const model = 'claude-opus-4-6';
+    const model = this.summaryModel;
 
     const { topic, outcome, confidence } = await this.lifecycle.extractTopicAndOutcome(session.conversationHistory);
     console.log(`[Session] Topic: ${topic}, Outcome: ${outcome}, Confidence: ${confidence}`);

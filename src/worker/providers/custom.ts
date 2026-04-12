@@ -1,11 +1,13 @@
-import type { LLMProvider, ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
+import type { ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
+import { BaseProvider } from './base.js';
 
-export class CustomProvider implements LLMProvider {
+export class CustomProvider extends BaseProvider {
   readonly name = 'custom';
   private baseUrl: string;
   private apiKey: string | undefined;
 
   constructor(baseUrl: string, apiKey?: string) {
+    super();
     this.baseUrl = baseUrl.replace(/\/$/, ''); // remove trailing slash
     this.apiKey = apiKey;
   }
@@ -33,6 +35,7 @@ export class CustomProvider implements LLMProvider {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
     });
 
     if (!res.ok) {
@@ -51,23 +54,5 @@ export class CustomProvider implements LLMProvider {
         output: data.usage?.completion_tokens ?? 0,
       },
     };
-  }
-
-  async summarize(text: string, model: string): Promise<string> {
-    const response = await this.chat(
-      [{ role: 'user', content: text }],
-      {
-        model,
-        systemPrompt: 'Summarize the following discussion concisely in 200-300 words. Capture key conclusions, differing perspectives, and unresolved points. Respond in the same language as the input.',
-        maxTokens: 1024,
-        temperature: 0.3,
-      },
-    );
-    return response.content;
-  }
-
-  estimateTokens(messages: ProviderMessage[]): number {
-    const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
-    return Math.ceil(totalChars / 4);
   }
 }

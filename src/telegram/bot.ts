@@ -30,8 +30,9 @@ export class BotManager {
     if (this.bots.size === 0) {
       const fallbackToken = process.env['TELEGRAM_BOT_TOKEN'];
       if (fallbackToken) {
+        const fallbackBot = new Bot(fallbackToken);
         for (const agent of config.agents) {
-          this.bots.set(agent.id, new Bot(fallbackToken));
+          this.bots.set(agent.id, fallbackBot);
         }
       }
     }

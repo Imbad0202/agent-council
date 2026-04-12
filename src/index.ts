@@ -11,6 +11,7 @@ import { UsageTracker } from './memory/tracker.js';
 import { SessionLifecycle } from './memory/lifecycle.js';
 import { PatternDetector } from './council/pattern-detector.js';
 import { ParticipationManager } from './council/participation.js';
+import type { LLMProvider } from './types.js';
 
 async function main() {
   const groupChatId = Number(process.env.TELEGRAM_GROUP_CHAT_ID);
@@ -28,9 +29,18 @@ async function main() {
 
   console.log(`Loaded ${agentConfigs.length} agents: ${agentConfigs.map((a) => `${a.name}(${a.provider})`).join(', ')}`);
 
+  // Cache providers so agents sharing a provider reuse the same client instance
+  const providerCache = new Map<string, LLMProvider>();
+  function getOrCreateProvider(name: string): LLMProvider {
+    if (!providerCache.has(name)) {
+      providerCache.set(name, createProvider(name));
+    }
+    return providerCache.get(name)!;
+  }
+
   // Create per-agent providers (each agent can use different LLM)
   const workers = agentConfigs.map((config) => {
-    const provider = createProvider(config.provider);
+    const provider = getOrCreateProvider(config.provider);
     return new AgentWorker(config, provider, memorySyncPath ?? '');
   });
 
@@ -60,7 +70,7 @@ async function main() {
   // Phase 2: Memory modules
   if (councilConfig.memory) {
     const dataDir = resolve('data');
-    const mainProvider = createProvider(agentConfigs[0].provider);
+    const mainProvider = getOrCreateProvider(agentConfigs[0].provider);
     const memoryDb = new MemoryDB(resolve(councilConfig.memory.dbPath));
     const tracker = new UsageTracker(memoryDb);
     const lifecycle = new SessionLifecycle(councilConfig.memory, mainProvider, agentConfigs[0].model);
@@ -76,6 +86,7 @@ async function main() {
       patternDetector,
       provider: mainProvider,
       dataDir,
+      summaryModel: agentConfigs[0].model,
     });
 
     console.log('Phase 2 modules initialized');
