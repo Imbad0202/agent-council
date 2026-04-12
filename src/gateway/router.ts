@@ -27,8 +27,12 @@ export class GatewayRouter {
     this.conversationHistory.push(message);
     this.turnManager.recordHumanTurn();
 
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Turn ${this.turnManager.turnCount}] Human: ${message.content.slice(0, 100)}${message.content.length > 100 ? '...' : ''}`);
+
     const agentIds = this.workers.map((w) => w.id);
     this.currentRoles = assignRoles(agentIds, message.content, this.config);
+    console.log(`[Roles] ${Object.entries(this.currentRoles).map(([id, role]) => `${id}=${role}`).join(', ')}`);
 
     const responses = await Promise.all(
       this.workers.map(async (worker) => {
@@ -50,13 +54,18 @@ export class GatewayRouter {
             : convergencePrompt;
         }
 
+        console.log(`[${worker.id}] Thinking as ${role}...`);
         const response = await worker.respond(this.conversationHistory, role, challengePrompt);
+        console.log(`[${worker.id}] Response: ${response.content.slice(0, 80)}... (${response.tokensUsed.input}+${response.tokensUsed.output} tokens)`);
         return { worker, response };
       }),
     );
 
     for (const { worker, response } of responses) {
-      if (response.skip) continue;
+      if (response.skip) {
+        console.log(`[${worker.id}] Skipped: ${response.skipReason ?? 'no reason'}`);
+        continue;
+      }
 
       const agentMsg: CouncilMessage = {
         id: `agent-${worker.id}-${Date.now()}`,
@@ -77,9 +86,11 @@ export class GatewayRouter {
 
       const classification = this.antiSycophancy.classifyResponse(response.content);
       this.antiSycophancy.recordClassification(classification);
+      console.log(`[${worker.id}] Classification: ${classification}`);
     }
 
     await this.turnManager.flushQueue(this.sendFn);
+    console.log(`[Done] Turn ${this.turnManager.turnCount} complete\n`);
   }
 
   getConversationHistory(): CouncilMessage[] {
