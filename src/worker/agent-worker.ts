@@ -20,6 +20,7 @@ export class AgentWorker {
     disagreementRate: 0,
     averageLength: 0,
     skipCount: 0,
+    modelUsage: {},
   };
 
   constructor(config: AgentConfig, provider: LLMProvider, memorySyncPath: string) {
