@@ -5,6 +5,7 @@ interface TelegramMessage {
   text?: string;
   date: number;
   from?: { id: number; first_name: string };
+  message_thread_id?: number;
 }
 
 export function createCouncilMessageFromTelegram(msg: TelegramMessage): CouncilMessage {
@@ -13,6 +14,7 @@ export function createCouncilMessageFromTelegram(msg: TelegramMessage): CouncilM
     role: 'human',
     content: msg.text ?? '',
     timestamp: msg.date * 1000,
+    threadId: msg.message_thread_id,
   };
 }
 

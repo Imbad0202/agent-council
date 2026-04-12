@@ -18,6 +18,18 @@ describe('handlers', () => {
       expect(msg.timestamp).toBe(1712900000000);
     });
 
+    it('passes message_thread_id as threadId', () => {
+      const telegramMsg = {
+        message_id: 44,
+        text: 'Hello from a topic',
+        date: 1712900000,
+        from: { id: 601357059, first_name: 'Test' },
+        message_thread_id: 99,
+      };
+      const msg = createCouncilMessageFromTelegram(telegramMsg);
+      expect(msg.threadId).toBe(99);
+    });
+
     it('handles message without text', () => {
       const telegramMsg = {
         message_id: 43,
