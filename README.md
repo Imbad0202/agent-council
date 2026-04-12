@@ -253,7 +253,16 @@ npm run test:watch    # Watch mode
 
 ## Docker
 
-Docker support will be added in a future release. The project requires Node.js >= 22.
+```bash
+# Build and run
+docker compose up -d
+
+# Or build manually
+docker build -t agent-council .
+docker run -d --env-file .env -v ./data:/app/data -v ./config:/app/config agent-council
+```
+
+Mount `data/` to persist brain.db and session summaries. Mount `config/` to customize agents and council settings.
 
 ## Contributing
 
