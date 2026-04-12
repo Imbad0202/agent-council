@@ -266,8 +266,8 @@ Mount `data/` to persist brain.db and session summaries. Mount `config/` to cust
 
 ## Contributing
 
-Contributions are welcome. Please see CONTRIBUTING.md (coming soon) for guidelines.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT
+[MIT](LICENSE)
