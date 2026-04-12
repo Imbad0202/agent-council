@@ -3,6 +3,7 @@ import type { CouncilConfig, CouncilMessage, AgentRole, LLMProvider } from '../t
 import { TurnManager } from './turn-manager.js';
 import { AntiSycophancyEngine } from '../council/anti-sycophancy.js';
 import { assignRoles } from '../council/role-assigner.js';
+import { ParticipationManager } from '../council/participation.js';
 import { MemoryDB } from '../memory/db.js';
 import { UsageTracker } from '../memory/tracker.js';
 import { SessionLifecycle } from '../memory/lifecycle.js';
@@ -11,14 +12,21 @@ import { generateSessionSummary, saveSessionSummary } from '../memory/session-su
 import { MemoryPruner } from '../memory/pruner.js';
 import { MemoryConsolidator } from '../memory/consolidator.js';
 
-type SendFn = (agentId: string, content: string) => Promise<void>;
+type SendFn = (agentId: string, content: string, threadId?: number) => Promise<void>;
+
+interface SessionState {
+  conversationHistory: CouncilMessage[];
+  currentParticipants: string[];
+  turnManager: TurnManager;
+  antiSycophancy: AntiSycophancyEngine;
+  pendingPatternInjection: { targetAgent: string; prompt: string } | null;
+  inactivityTimer: ReturnType<typeof setTimeout> | null;
+}
 
 export class GatewayRouter {
   private workers: AgentWorker[];
   private config: CouncilConfig;
-  private turnManager: TurnManager;
-  private antiSycophancy: AntiSycophancyEngine;
-  private conversationHistory: CouncilMessage[] = [];
+  private sessions: Map<number, SessionState> = new Map();
   private sendFn: SendFn;
   private currentRoles: Record<string, AgentRole> = {};
   private usageTracker: UsageTracker | null = null;
@@ -27,15 +35,12 @@ export class GatewayRouter {
   private memoryDb: MemoryDB | null = null;
   private provider: LLMProvider | null = null;
   private dataDir: string | null = null;
-  private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingPatternInjection: { targetAgent: string; prompt: string } | null = null;
+  private participationManager: ParticipationManager | null = null;
 
   constructor(workers: AgentWorker[], config: CouncilConfig, sendFn: SendFn) {
     this.workers = workers;
     this.config = config;
     this.sendFn = sendFn;
-    this.turnManager = new TurnManager(config.gateway);
-    this.antiSycophancy = new AntiSycophancyEngine(config.antiSycophancy);
   }
 
   setPhase2(deps: {
@@ -54,41 +59,94 @@ export class GatewayRouter {
     this.dataDir = deps.dataDir;
   }
 
+  setParticipation(manager: ParticipationManager): void {
+    this.participationManager = manager;
+  }
+
+  private getSession(threadId: number): SessionState {
+    if (!this.sessions.has(threadId)) {
+      this.sessions.set(threadId, {
+        conversationHistory: [],
+        currentParticipants: this.workers.map((w) => w.id),
+        turnManager: new TurnManager(this.config.gateway),
+        antiSycophancy: new AntiSycophancyEngine(this.config.antiSycophancy),
+        pendingPatternInjection: null,
+        inactivityTimer: null,
+      });
+    }
+    return this.sessions.get(threadId)!;
+  }
+
   async handleHumanMessage(message: CouncilMessage): Promise<void> {
-    this.conversationHistory.push(message);
-    this.turnManager.recordHumanTurn();
+    const threadId = message.threadId ?? 0;
+    const session = this.getSession(threadId);
+
+    session.conversationHistory.push(message);
+    session.turnManager.recordHumanTurn();
 
     // Check for session end keywords
     if (this.lifecycle?.isEndKeyword(message.content)) {
       console.log('[Session] End keyword detected, triggering summary...');
-      await this.triggerSessionEnd();
+      await this.triggerSessionEnd(threadId);
       return;
     }
 
-    // Reset inactivity timer
-    this.resetInactivityTimer();
+    // Reset inactivity timer for this session
+    this.resetInactivityTimer(threadId);
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`[Turn ${this.turnManager.turnCount}] Human: ${message.content.slice(0, 100)}${message.content.length > 100 ? '...' : ''}`);
+    console.log(`[Turn ${session.turnManager.turnCount}] Human: ${message.content.slice(0, 100)}${message.content.length > 100 ? '...' : ''}`);
 
-    const agentIds = this.workers.map((w) => w.id);
+    // Select participants for this turn
+    let activeWorkers = this.workers;
+    if (this.participationManager) {
+      const changes = this.participationManager.detectRecruitment(
+        message.content,
+        session.currentParticipants,
+        {}, // TODO: track skip counts per session
+      );
+
+      if (changes.joining.length > 0) {
+        for (const id of changes.joining) {
+          session.currentParticipants.push(id);
+          if (this.config.participation?.recruitmentMessage) {
+            const name = this.workers.find((w) => w.id === id)?.name ?? id;
+            await this.sendFn('system', `\u{1F504} ${name} \u52A0\u5165\u4E86\u9019\u5834\u8A0E\u8AD6`, threadId);
+          }
+        }
+      }
+
+      if (changes.leaving.length > 0) {
+        for (const id of changes.leaving) {
+          session.currentParticipants = session.currentParticipants.filter((p) => p !== id);
+          if (this.config.participation?.recruitmentMessage) {
+            const name = this.workers.find((w) => w.id === id)?.name ?? id;
+            await this.sendFn('system', `\u{1F44B} ${name} \u9000\u51FA\u4E86\u9019\u5834\u8A0E\u8AD6`, threadId);
+          }
+        }
+      }
+
+      activeWorkers = this.workers.filter((w) => session.currentParticipants.includes(w.id));
+    }
+
+    const agentIds = activeWorkers.map((w) => w.id);
     this.currentRoles = assignRoles(agentIds, message.content, this.config);
     console.log(`[Roles] ${Object.entries(this.currentRoles).map(([id, role]) => `${id}=${role}`).join(', ')}`);
 
     const responses = await Promise.all(
-      this.workers.map(async (worker) => {
+      activeWorkers.map(async (worker) => {
         const role = this.currentRoles[worker.id];
 
-        const lastAgentMsg = [...this.conversationHistory]
+        const lastAgentMsg = [...session.conversationHistory]
           .reverse()
           .find((m) => m.role === 'agent' && m.agentId !== worker.id);
 
         let challengePrompt: string | undefined;
         if (lastAgentMsg) {
-          challengePrompt = this.antiSycophancy.generateChallengePrompt(lastAgentMsg);
+          challengePrompt = session.antiSycophancy.generateChallengePrompt(lastAgentMsg);
         }
 
-        const convergencePrompt = this.antiSycophancy.checkConvergence();
+        const convergencePrompt = session.antiSycophancy.checkConvergence();
         if (convergencePrompt) {
           challengePrompt = challengePrompt
             ? `${challengePrompt}\n\n${convergencePrompt}`
@@ -96,16 +154,16 @@ export class GatewayRouter {
         }
 
         // Add pattern-detected injection if targeting this worker
-        if (this.pendingPatternInjection?.targetAgent === worker.id) {
-          const patternPrompt = this.pendingPatternInjection.prompt;
+        if (session.pendingPatternInjection?.targetAgent === worker.id) {
+          const patternPrompt = session.pendingPatternInjection.prompt;
           challengePrompt = challengePrompt
             ? `${challengePrompt}\n\n${patternPrompt}`
             : patternPrompt;
-          this.pendingPatternInjection = null;
+          session.pendingPatternInjection = null;
         }
 
         console.log(`[${worker.id}] Thinking as ${role}...`);
-        const response = await worker.respond(this.conversationHistory, role, challengePrompt);
+        const response = await worker.respond(session.conversationHistory, role, challengePrompt);
         console.log(`[${worker.id}] Response: ${response.content.slice(0, 80)}... (${response.tokensUsed.input}+${response.tokensUsed.output} tokens)`);
         return { worker, response };
       }),
@@ -123,6 +181,7 @@ export class GatewayRouter {
         agentId: worker.id,
         content: response.content,
         timestamp: Date.now(),
+        threadId,
         metadata: {
           assignedRole: this.currentRoles[worker.id],
           confidence: response.confidence,
@@ -130,12 +189,12 @@ export class GatewayRouter {
         },
       };
 
-      this.conversationHistory.push(agentMsg);
-      this.turnManager.recordAgentTurn(worker.id);
-      this.turnManager.enqueueResponse(worker.id, response.content);
+      session.conversationHistory.push(agentMsg);
+      session.turnManager.recordAgentTurn(worker.id);
+      session.turnManager.enqueueResponse(worker.id, response.content);
 
-      const classification = this.antiSycophancy.classifyResponse(response.content);
-      this.antiSycophancy.recordClassification(classification);
+      const classification = session.antiSycophancy.classifyResponse(response.content);
+      session.antiSycophancy.recordClassification(classification);
       console.log(`[${worker.id}] Classification: ${classification}`);
 
       // Track memory references (Phase 2)
@@ -148,14 +207,16 @@ export class GatewayRouter {
       }
     }
 
-    await this.turnManager.flushQueue(this.sendFn);
+    await session.turnManager.flushQueue(async (agentId, content) => {
+      await this.sendFn(agentId, content, threadId);
+    });
 
     // Anti-pattern detection (Phase 2)
-    if (this.patternDetector?.shouldDetect(this.turnManager.turnCount)) {
-      const detection = await this.patternDetector.detect(this.conversationHistory);
+    if (this.patternDetector?.shouldDetect(session.turnManager.turnCount)) {
+      const detection = await this.patternDetector.detect(session.conversationHistory);
       if (detection) {
         console.log(`[Pattern] Detected: ${detection.pattern} -> ${detection.targetAgent}`);
-        this.pendingPatternInjection = {
+        session.pendingPatternInjection = {
           targetAgent: detection.targetAgent,
           prompt: this.patternDetector.getInjectionPrompt(detection.pattern),
         };
@@ -163,39 +224,44 @@ export class GatewayRouter {
     }
 
     // Check session max turns
-    if (this.isSessionMaxReached() && this.lifecycle) {
+    if (this.isSessionMaxReached(threadId) && this.lifecycle) {
       console.log('[Session] Max turns reached, triggering summary...');
-      await this.triggerSessionEnd();
+      await this.triggerSessionEnd(threadId);
     }
 
-    console.log(`[Done] Turn ${this.turnManager.turnCount} complete\n`);
+    console.log(`[Done] Turn ${session.turnManager.turnCount} complete\n`);
   }
 
-  getConversationHistory(): CouncilMessage[] {
-    return [...this.conversationHistory];
+  getConversationHistory(threadId?: number): CouncilMessage[] {
+    const session = this.sessions.get(threadId ?? 0);
+    return session ? [...session.conversationHistory] : [];
   }
 
-  isSessionMaxReached(): boolean {
-    return this.turnManager.isSessionMaxReached();
+  isSessionMaxReached(threadId?: number): boolean {
+    const session = this.sessions.get(threadId ?? 0);
+    return session ? session.turnManager.isSessionMaxReached() : false;
   }
 
   reset(): void {
-    this.conversationHistory = [];
-    this.turnManager.reset();
-    this.antiSycophancy.reset();
+    for (const session of this.sessions.values()) {
+      if (session.inactivityTimer) clearTimeout(session.inactivityTimer);
+    }
+    this.sessions.clear();
   }
 
-  private async triggerSessionEnd(): Promise<void> {
+  private async triggerSessionEnd(threadId: number): Promise<void> {
+    const session = this.sessions.get(threadId);
+    if (!session) return;
     if (!this.lifecycle || !this.provider || !this.dataDir || !this.memoryDb) return;
-    if (this.conversationHistory.length < 2) return;
+    if (session.conversationHistory.length < 2) return;
 
     const agentIds = this.workers.map((w) => w.id);
     const model = 'claude-opus-4-6';
 
-    const { topic, outcome, confidence } = await this.lifecycle.extractTopicAndOutcome(this.conversationHistory);
+    const { topic, outcome, confidence } = await this.lifecycle.extractTopicAndOutcome(session.conversationHistory);
     console.log(`[Session] Topic: ${topic}, Outcome: ${outcome}, Confidence: ${confidence}`);
 
-    const summary = await generateSessionSummary(this.conversationHistory, agentIds, this.provider, model);
+    const summary = await generateSessionSummary(session.conversationHistory, agentIds, this.provider, model);
 
     const date = new Date().toISOString().slice(0, 10);
 
@@ -219,7 +285,7 @@ export class GatewayRouter {
       });
     }
 
-    await this.sendFn('system', `\u{1F4CB} Council \u6458\u8981\uFF1A${topic} \u2014 ${outcome}`);
+    await this.sendFn('system', `\u{1F4CB} Council \u6458\u8981\uFF1A${topic} \u2014 ${outcome}`, threadId);
 
     // Check consolidation
     if (this.config.memory) {
@@ -243,18 +309,20 @@ export class GatewayRouter {
       }
     }
 
-    this.reset();
+    this.sessions.delete(threadId);
     console.log('[Session] Session ended and reset.');
   }
 
-  private resetInactivityTimer(): void {
-    if (this.inactivityTimer) {
-      clearTimeout(this.inactivityTimer);
+  private resetInactivityTimer(threadId: number): void {
+    const session = this.sessions.get(threadId);
+    if (!session) return;
+    if (session.inactivityTimer) {
+      clearTimeout(session.inactivityTimer);
     }
     if (this.lifecycle && this.config.memory) {
-      this.inactivityTimer = setTimeout(async () => {
+      session.inactivityTimer = setTimeout(async () => {
         console.log('[Session] Inactivity timeout, triggering summary...');
-        await this.triggerSessionEnd();
+        await this.triggerSessionEnd(threadId);
       }, this.config.memory.sessionTimeoutMs);
     }
   }

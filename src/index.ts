@@ -2,24 +2,21 @@ import 'dotenv/config';
 import { resolve } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { loadAgentConfig, loadCouncilConfig } from './config.js';
-import { ClaudeProvider } from './worker/providers/claude.js';
+import { createProvider } from './worker/providers/factory.js';
 import { AgentWorker } from './worker/agent-worker.js';
 import { GatewayRouter } from './gateway/router.js';
-import { createBot, getLastMessageThreadId } from './telegram/bot.js';
+import { BotManager } from './telegram/bot.js';
 import { MemoryDB } from './memory/db.js';
 import { UsageTracker } from './memory/tracker.js';
 import { SessionLifecycle } from './memory/lifecycle.js';
 import { PatternDetector } from './council/pattern-detector.js';
+import { ParticipationManager } from './council/participation.js';
 
 async function main() {
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const groupChatId = Number(process.env.TELEGRAM_GROUP_CHAT_ID);
-  const memorySyncPath = process.env.MEMORY_SYNC_PATH;
-
-  if (!anthropicKey) throw new Error('ANTHROPIC_API_KEY is required');
-  if (!botToken) throw new Error('TELEGRAM_BOT_TOKEN is required');
   if (!groupChatId) throw new Error('TELEGRAM_GROUP_CHAT_ID is required');
+
+  const memorySyncPath = process.env.MEMORY_SYNC_PATH;
   if (!memorySyncPath) console.log('MEMORY_SYNC_PATH not set — running without external memory');
 
   const configDir = resolve('config');
@@ -29,31 +26,47 @@ async function main() {
   const agentFiles = readdirSync(agentConfigDir).filter((f) => f.endsWith('.yaml'));
   const agentConfigs = agentFiles.map((f) => loadAgentConfig(resolve(agentConfigDir, f)));
 
-  console.log(`Loaded ${agentConfigs.length} agents: ${agentConfigs.map((a) => a.name).join(', ')}`);
+  console.log(`Loaded ${agentConfigs.length} agents: ${agentConfigs.map((a) => `${a.name}(${a.provider})`).join(', ')}`);
 
-  const provider = new ClaudeProvider(anthropicKey);
-  const workers = agentConfigs.map((config) => new AgentWorker(config, provider, memorySyncPath ?? ''));
-
-  const agentNames: Record<string, string> = {};
-  for (const config of agentConfigs) {
-    agentNames[config.id] = config.name;
-  }
-
-  let sendToTelegram: (agentId: string, content: string) => Promise<void> = async () => {};
-
-  const router = new GatewayRouter(workers, councilConfig, async (agentId, content) => {
-    await sendToTelegram(agentId, content);
+  // Create per-agent providers (each agent can use different LLM)
+  const workers = agentConfigs.map((config) => {
+    const provider = createProvider(config.provider);
+    return new AgentWorker(config, provider, memorySyncPath ?? '');
   });
 
-  // Phase 2: Initialize memory DB and modules
+  // Bot manager: one bot per agent
+  const listenerAgent = councilConfig.participation?.listenerAgent || agentConfigs[0].id;
+  const botManager = new BotManager({
+    groupChatId,
+    agents: agentConfigs,
+    listenerAgentId: listenerAgent,
+  });
+
+  console.log(`Bot manager: ${botManager.getBotCount()} bots, listener: ${listenerAgent}`);
+
+  // Router with multi-bot send function
+  const router = new GatewayRouter(workers, councilConfig, async (agentId, content, threadId) => {
+    const agentName = agentConfigs.find((a) => a.id === agentId)?.name ?? agentId;
+    await botManager.sendMessage(agentId, agentName, content, threadId);
+  });
+
+  // Participation manager
+  if (councilConfig.participation) {
+    const participationManager = new ParticipationManager(councilConfig.participation, agentConfigs);
+    router.setParticipation(participationManager);
+    console.log('Participation manager initialized');
+  }
+
+  // Phase 2: Memory modules
   if (councilConfig.memory) {
     const dataDir = resolve('data');
+    const mainProvider = createProvider(agentConfigs[0].provider);
     const memoryDb = new MemoryDB(resolve(councilConfig.memory.dbPath));
     const tracker = new UsageTracker(memoryDb);
-    const lifecycle = new SessionLifecycle(councilConfig.memory, provider, agentConfigs[0].model);
+    const lifecycle = new SessionLifecycle(councilConfig.memory, mainProvider, agentConfigs[0].model);
     const patternDetector = new PatternDetector(
       councilConfig.antiPattern ?? { enabled: false, detectionModel: '', startAfterTurn: 3, detectEveryNTurns: 2 },
-      provider,
+      mainProvider,
     );
 
     router.setPhase2({
@@ -61,54 +74,43 @@ async function main() {
       tracker,
       lifecycle,
       patternDetector,
-      provider,
+      provider: mainProvider,
       dataDir,
     });
 
-    console.log('Phase 2 modules initialized: memory DB, usage tracker, lifecycle, pattern detector');
+    console.log('Phase 2 modules initialized');
   }
 
-  const bot = createBot({ token: botToken, groupChatId, agentNames }, router);
+  // Setup listener and start
+  botManager.setupListener(router);
 
-  sendToTelegram = async (agentId: string, content: string) => {
-    const agentName = agentNames[agentId] ?? agentId;
-    const formatted = `\u{1F916} ${agentName}\n\n${content}`;
-    const threadId = getLastMessageThreadId();
-    await bot.api.sendMessage(groupChatId, formatted, {
-      ...(threadId ? { message_thread_id: threadId } : {}),
-    });
-  };
+  const listenerBot = botManager.getListenerBot();
 
   console.log('Agent Council starting...');
   console.log(`Group chat ID: ${groupChatId}`);
-  console.log(`Memory sync path: ${memorySyncPath}`);
 
-  // Clear any stale long-polling connections before starting.
-  // Telegram holds long-poll connections for up to 30s. A short getUpdates
-  // with timeout=1 will either succeed (claiming the slot) or fail with 409
-  // (meaning a stale connection exists). We retry until we get a clean slot.
-  await bot.api.deleteWebhook({ drop_pending_updates: true });
+  await listenerBot.api.deleteWebhook({ drop_pending_updates: true });
 
   console.log('Waiting for clean Telegram polling slot...');
   for (let attempt = 1; attempt <= 6; attempt++) {
     try {
-      await bot.api.raw.getUpdates({ offset: -1, limit: 1, timeout: 1 });
+      await listenerBot.api.raw.getUpdates({ offset: -1, limit: 1, timeout: 1 });
       console.log('Polling slot acquired.');
       break;
     } catch (err: unknown) {
       const isConflict = err instanceof Error && err.message.includes('409');
       if (isConflict && attempt < 6) {
-        console.log(`  Stale connection detected (attempt ${attempt}/6), waiting 5s...`);
+        console.log(`  Stale connection (attempt ${attempt}/6), waiting 5s...`);
         await new Promise((r) => setTimeout(r, 5_000));
       } else if (!isConflict) {
-        break; // Non-conflict error, proceed anyway
+        break;
       } else {
-        console.log('  Could not acquire clean slot after 6 attempts, starting anyway...');
+        console.log('  Could not acquire clean slot, starting anyway...');
       }
     }
   }
 
-  await bot.start({
+  await listenerBot.start({
     drop_pending_updates: true,
     onStart: () => console.log('Agent Council is running! Send a message in the Telegram group.'),
   });
