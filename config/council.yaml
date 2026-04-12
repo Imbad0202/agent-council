@@ -1,0 +1,26 @@
+# Council configuration
+gateway:
+  thinking_window_ms: 5000
+  random_delay_ms: [1000, 3000]
+  max_inter_agent_rounds: 3
+  context_window_turns: 10
+  session_max_turns: 20
+
+anti_sycophancy:
+  disagreement_threshold: 0.2
+  consecutive_low_rounds: 3
+  challenge_angles:
+    - cost
+    - risk
+    - alternatives
+    - long-term impact
+    - scalability
+    - maintainability
+
+roles:
+  default_2_agents:
+    - advocate
+    - critic
+  topic_overrides:
+    code: [author, reviewer]
+    strategy: [advocate, critic]
