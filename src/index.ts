@@ -6,6 +6,10 @@ import { ClaudeProvider } from './worker/providers/claude.js';
 import { AgentWorker } from './worker/agent-worker.js';
 import { GatewayRouter } from './gateway/router.js';
 import { createBot, getLastMessageThreadId } from './telegram/bot.js';
+import { MemoryDB } from './memory/db.js';
+import { UsageTracker } from './memory/tracker.js';
+import { SessionLifecycle } from './memory/lifecycle.js';
+import { PatternDetector } from './council/pattern-detector.js';
 
 async function main() {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -40,6 +44,29 @@ async function main() {
   const router = new GatewayRouter(workers, councilConfig, async (agentId, content) => {
     await sendToTelegram(agentId, content);
   });
+
+  // Phase 2: Initialize memory DB and modules
+  if (councilConfig.memory) {
+    const dataDir = resolve('data');
+    const memoryDb = new MemoryDB(resolve(councilConfig.memory.dbPath));
+    const tracker = new UsageTracker(memoryDb);
+    const lifecycle = new SessionLifecycle(councilConfig.memory, provider, agentConfigs[0].model);
+    const patternDetector = new PatternDetector(
+      councilConfig.antiPattern ?? { enabled: false, detectionModel: '', startAfterTurn: 3, detectEveryNTurns: 2 },
+      provider,
+    );
+
+    router.setPhase2({
+      db: memoryDb,
+      tracker,
+      lifecycle,
+      patternDetector,
+      provider,
+      dataDir,
+    });
+
+    console.log('Phase 2 modules initialized: memory DB, usage tracker, lifecycle, pattern detector');
+  }
 
   const bot = createBot({ token: botToken, groupChatId, agentNames }, router);
 
