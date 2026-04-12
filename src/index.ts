@@ -56,9 +56,29 @@ async function main() {
   console.log(`Group chat ID: ${groupChatId}`);
   console.log(`Memory sync path: ${memorySyncPath}`);
 
-  await bot.start({
-    onStart: () => console.log('Agent Council is running! Send a message in the Telegram group.'),
-  });
+  // Clear any stale long-polling connections before starting
+  await bot.api.deleteWebhook({ drop_pending_updates: true });
+
+  // Retry logic: Telegram may hold a stale long-poll for up to 30s after a crash
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 10_000;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await bot.start({
+        drop_pending_updates: true,
+        onStart: () => console.log('Agent Council is running! Send a message in the Telegram group.'),
+      });
+      break;
+    } catch (err: unknown) {
+      const isConflict = err instanceof Error && err.message.includes('409');
+      if (isConflict && attempt < MAX_RETRIES) {
+        console.log(`Telegram polling conflict (attempt ${attempt}/${MAX_RETRIES}), retrying in ${RETRY_DELAY_MS / 1000}s...`);
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      } else {
+        throw err;
+      }
+    }
+  }
 }
 
 main().catch((err) => {
