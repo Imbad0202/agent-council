@@ -38,3 +38,9 @@ anti_pattern:
   detection_model: claude-haiku-4-5-20251001
   start_after_turn: 3
   detect_every_n_turns: 2
+
+participation:
+  max_agents_per_turn: 3
+  min_agents_per_turn: 2
+  recruitment_message: true
+  listener_agent: huahua
