@@ -1,4 +1,4 @@
-import type { AgentRole, CouncilConfig } from '../types.js';
+import type { AgentRole, CouncilConfig, PatternRecord } from '../types.js';
 
 const TOPIC_KEYWORDS: Record<string, string[]> = {
   code: ['code', 'implement', 'function', 'bug', 'refactor', 'review', 'PR', 'commit', 'test', 'debug', 'API'],
@@ -26,6 +26,7 @@ export function assignRoles(
   agentIds: string[],
   message: string,
   config: CouncilConfig,
+  patterns?: PatternRecord[],
 ): Record<string, AgentRole> {
   const topic = detectTopic(message);
   let roleList: AgentRole[];
@@ -38,6 +39,25 @@ export function assignRoles(
 
   while (roleList.length < agentIds.length) {
     roleList.push('analyst');
+  }
+
+  // Pattern-informed assignment: if an agent tends toward one behavior, assign opposite role
+  if (patterns && patterns.length > 0 && roleList.length >= 2) {
+    const relevantPatterns = patterns.filter((p) => !topic || p.topic === topic);
+
+    if (relevantPatterns.length > 0) {
+      const patternAgent = relevantPatterns[0].agentId;
+      const behavior = relevantPatterns[0].behavior.toLowerCase();
+      const isConservative = behavior.includes('conservative') || behavior.includes('cautious');
+
+      if (isConservative && agentIds.includes(patternAgent)) {
+        const assignments: Record<string, AgentRole> = {};
+        assignments[patternAgent] = roleList.find((r) => r === 'advocate' || r === 'author') ?? roleList[0];
+        const otherAgent = agentIds.find((id) => id !== patternAgent)!;
+        assignments[otherAgent] = roleList.find((r) => r === 'critic' || r === 'reviewer') ?? roleList[1];
+        return assignments;
+      }
+    }
   }
 
   const shuffledAgents = [...agentIds].sort(() => Math.random() - 0.5);

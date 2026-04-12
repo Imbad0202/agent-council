@@ -53,4 +53,15 @@ describe('assignRoles', () => {
     const hasCritic = assigned.some((r) => r === 'critic' || r === 'reviewer');
     expect(hasCritic).toBe(true);
   });
+
+  it('considers patterns when assigning roles', () => {
+    const patterns = [
+      { id: 1, agentId: 'huahua', topic: 'code', behavior: 'tends toward conservative positions', extractedFrom: 'p.md', createdAt: '2026-04-12' },
+    ];
+    const roles = assignRoles(['huahua', 'binbin'], 'Review this code implementation', config, patterns);
+    expect(Object.keys(roles)).toHaveLength(2);
+    // huahua should get advocate/author (opposite of conservative tendency)
+    const huahuaRole = roles['huahua'];
+    expect(huahuaRole === 'advocate' || huahuaRole === 'author').toBe(true);
+  });
 });
