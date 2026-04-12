@@ -41,5 +41,19 @@ export function loadCouncilConfig(filePath: string): CouncilConfig {
       default2Agents: parsed.roles.default_2_agents,
       topicOverrides: parsed.roles.topic_overrides ?? {},
     },
+    memory: {
+      dbPath: parsed.memory?.db_path ?? 'data/brain.db',
+      sessionTimeoutMs: parsed.memory?.session_timeout_ms ?? 600000,
+      endKeywords: parsed.memory?.end_keywords ?? ['結束', 'done', '結論', 'wrap up', '總結'],
+      archiveThreshold: parsed.memory?.archive_threshold ?? 30,
+      archiveBottomPercent: parsed.memory?.archive_bottom_percent ?? 20,
+      consolidationThreshold: parsed.memory?.consolidation_threshold ?? 5,
+    },
+    antiPattern: {
+      enabled: parsed.anti_pattern?.enabled ?? true,
+      detectionModel: parsed.anti_pattern?.detection_model ?? 'claude-haiku-4-5-20251001',
+      startAfterTurn: parsed.anti_pattern?.start_after_turn ?? 3,
+      detectEveryNTurns: parsed.anti_pattern?.detect_every_n_turns ?? 2,
+    },
   };
 }

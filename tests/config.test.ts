@@ -65,5 +65,43 @@ roles:
       expect(config.roles.default2Agents).toEqual(['advocate', 'critic']);
       expect(config.roles.topicOverrides.code).toEqual(['author', 'reviewer']);
     });
+
+    it('parses memory and anti_pattern config sections', () => {
+      const yamlContent = `
+gateway:
+  thinking_window_ms: 3000
+  random_delay_ms: [1000, 2000]
+  max_inter_agent_rounds: 2
+  context_window_turns: 8
+  session_max_turns: 15
+anti_sycophancy:
+  disagreement_threshold: 0.2
+  consecutive_low_rounds: 3
+  challenge_angles: [cost, risk]
+roles:
+  default_2_agents: [advocate, critic]
+  topic_overrides:
+    code: [author, reviewer]
+memory:
+  db_path: data/brain.db
+  session_timeout_ms: 600000
+  end_keywords: ["結束", "done", "結論"]
+  archive_threshold: 30
+  archive_bottom_percent: 20
+  consolidation_threshold: 5
+anti_pattern:
+  enabled: true
+  detection_model: claude-haiku-4-5-20251001
+  start_after_turn: 3
+  detect_every_n_turns: 2
+`;
+      writeFileSync(join(testDir, 'council2.yaml'), yamlContent);
+      const config = loadCouncilConfig(join(testDir, 'council2.yaml'));
+      expect(config.memory?.dbPath).toBe('data/brain.db');
+      expect(config.memory?.endKeywords).toContain('結束');
+      expect(config.memory?.archiveThreshold).toBe(30);
+      expect(config.antiPattern?.enabled).toBe(true);
+      expect(config.antiPattern?.detectionModel).toBe('claude-haiku-4-5-20251001');
+    });
   });
 });

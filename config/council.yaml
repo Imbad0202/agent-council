@@ -24,3 +24,17 @@ roles:
   topic_overrides:
     code: [author, reviewer]
     strategy: [advocate, critic]
+
+memory:
+  db_path: data/brain.db
+  session_timeout_ms: 600000
+  end_keywords: ["結束", "done", "結論", "wrap up", "總結"]
+  archive_threshold: 30
+  archive_bottom_percent: 20
+  consolidation_threshold: 5
+
+anti_pattern:
+  enabled: true
+  detection_model: claude-haiku-4-5-20251001
+  start_after_turn: 3
+  detect_every_n_turns: 2
