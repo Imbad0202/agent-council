@@ -20,7 +20,7 @@ async function main() {
   if (!anthropicKey) throw new Error('ANTHROPIC_API_KEY is required');
   if (!botToken) throw new Error('TELEGRAM_BOT_TOKEN is required');
   if (!groupChatId) throw new Error('TELEGRAM_GROUP_CHAT_ID is required');
-  if (!memorySyncPath) throw new Error('MEMORY_SYNC_PATH is required');
+  if (!memorySyncPath) console.log('MEMORY_SYNC_PATH not set — running without external memory');
 
   const configDir = resolve('config');
   const councilConfig = loadCouncilConfig(resolve(configDir, 'council.yaml'));
@@ -32,7 +32,7 @@ async function main() {
   console.log(`Loaded ${agentConfigs.length} agents: ${agentConfigs.map((a) => a.name).join(', ')}`);
 
   const provider = new ClaudeProvider(anthropicKey);
-  const workers = agentConfigs.map((config) => new AgentWorker(config, provider, memorySyncPath));
+  const workers = agentConfigs.map((config) => new AgentWorker(config, provider, memorySyncPath ?? ''));
 
   const agentNames: Record<string, string> = {};
   for (const config of agentConfigs) {
