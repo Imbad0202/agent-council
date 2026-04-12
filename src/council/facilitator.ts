@@ -1,19 +1,13 @@
 import type { EventBus } from '../events/bus.js';
 import type { AgentWorker } from '../worker/agent-worker.js';
 import type { FacilitatorAction, CouncilMessage, PatternType } from '../types.js';
+import { PATTERN_INJECTION_PROMPTS } from './pattern-prompts.js';
 
 interface FacilitatorDecision {
   action: FacilitatorAction | 'none';
   content: string;
   target_agent: string | null;
 }
-
-const PATTERN_CHALLENGE_MESSAGES: Record<PatternType, string> = {
-  mirror: '你的回覆跟對方高度重疊。提出一個對方沒提到的面向，否則這場討論沒有意義。',
-  fake_dissent: '你聲稱不同意但結論一致。請說明：什麼情況下你會得出完全不同的結論？',
-  quick_surrender: '你在一次反對後就改變立場。那個反對真的推翻了你的論點嗎？請重新審視。',
-  authority_submission: '你在人類表態後改變了觀點。請基於論點本身評估，不是因為人類同意了對方。',
-};
 
 export class FacilitatorAgent {
   private bus: EventBus;
@@ -134,7 +128,7 @@ export class FacilitatorAgent {
   }
 
   private handlePattern(threadId: number, targetAgent: string, pattern: PatternType): void {
-    const content = PATTERN_CHALLENGE_MESSAGES[pattern];
+    const content = PATTERN_INJECTION_PROMPTS[pattern];
 
     this.bus.emit('facilitator.intervened', {
       threadId,

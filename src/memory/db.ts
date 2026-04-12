@@ -78,6 +78,9 @@ export class MemoryDB {
         content_preview TEXT
       );
 
+      CREATE INDEX IF NOT EXISTS idx_memories_agent_type ON memories(agent_id, type);
+      CREATE INDEX IF NOT EXISTS idx_memories_agent_topic ON memories(agent_id, topic);
+
       CREATE TABLE IF NOT EXISTS patterns (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         agent_id TEXT NOT NULL,

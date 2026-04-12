@@ -12,18 +12,18 @@ export class GatewayRouter {
   private sendFn: SendFn;
   private config: CouncilConfig;
   private sessionTimers: Map<number, SessionTimerState> = new Map();
+  private endKeywordsLower: string[];
 
   constructor(bus: EventBus, sendFn: SendFn, config: CouncilConfig) {
     this.bus = bus;
     this.sendFn = sendFn;
     this.config = config;
+    this.endKeywordsLower = (config.memory?.endKeywords ?? []).map((kw) => kw.toLowerCase());
 
-    // Send facilitator messages to Telegram
     this.bus.on('facilitator.intervened', async (payload) => {
       await this.sendFn('facilitator', payload.content, payload.threadId);
     });
 
-    // Clean up session on end
     this.bus.on('session.ended', (payload) => {
       this.clearInactivityTimer(payload.threadId);
       this.sessionTimers.delete(payload.threadId);
@@ -34,9 +34,9 @@ export class GatewayRouter {
     const threadId = message.threadId ?? 0;
 
     // Check for end keywords
-    if (this.config.memory) {
+    if (this.endKeywordsLower.length > 0) {
       const lower = message.content.toLowerCase();
-      const isEnd = this.config.memory.endKeywords.some((kw) => lower.includes(kw.toLowerCase()));
+      const isEnd = this.endKeywordsLower.some((kw) => lower.includes(kw));
       if (isEnd) {
         this.bus.emit('session.ending', { threadId, trigger: 'keyword' });
         return;

@@ -70,9 +70,10 @@ async function main() {
 
   console.log(`Bot manager: ${botManager.getBotCount()} bots, listener: ${listenerAgent}`);
 
-  // Multi-bot send function
+  // Agent name lookup (O(1) instead of O(n) per send)
+  const agentNameMap = new Map(agentConfigs.map((a) => [a.id, a.name]));
   const sendFn = async (agentId: string, content: string, threadId?: number) => {
-    const agentName = agentConfigs.find((a) => a.id === agentId)?.name ?? agentId;
+    const agentName = agentNameMap.get(agentId) ?? agentId;
     await botManager.sendMessage(agentId, agentName, content, threadId);
   };
 
