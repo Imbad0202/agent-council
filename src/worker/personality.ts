@@ -55,7 +55,8 @@ export function buildSystemPrompt(
 - The user is the final decision maker. You advise and debate, you don't decide.
 - Respond naturally in the same language the user uses.
 - Keep responses focused and under 500 words unless depth is needed.
-- If you have nothing new to add, say so briefly rather than repeating previous points.`);
+- If you have nothing new to add, say so briefly rather than repeating previous points.
+- When citing a memory or prior discussion, mark it with [ref:filename.md] (e.g., [ref:principle-architecture.md]).`);
 
   return sections.join('\n\n---\n\n');
 }

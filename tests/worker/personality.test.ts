@@ -46,6 +46,11 @@ User works at HEEACT.
     expect(prompt).toContain('flaw');
   });
 
+  it('includes reference instruction in council rules', () => {
+    const prompt = buildSystemPrompt(agentConfig, testDir, 'critic');
+    expect(prompt).toContain('[ref:');
+  });
+
   it('works without memory files', () => {
     rmSync(testDir, { recursive: true, force: true });
     mkdirSync(agentDir, { recursive: true });
