@@ -37,6 +37,24 @@ personality: |
       writeFileSync(join(testDir, 'agents', 'bad.yaml'), 'id: bad\n');
       expect(() => loadAgentConfig(join(testDir, 'agents', 'bad.yaml'))).toThrow();
     });
+
+    it('parses bot_token_env and topics', () => {
+      const yamlContent = `
+id: testbot
+name: TestBot
+provider: claude
+model: claude-opus-4-6
+memory_dir: TestBot/global
+bot_token_env: TELEGRAM_BOT_TOKEN_TEST
+topics: [code, architecture]
+personality: |
+  You are TestBot.
+`;
+      writeFileSync(join(testDir, 'agents', 'testbot2.yaml'), yamlContent);
+      const config = loadAgentConfig(join(testDir, 'agents', 'testbot2.yaml'));
+      expect(config.botTokenEnv).toBe('TELEGRAM_BOT_TOKEN_TEST');
+      expect(config.topics).toEqual(['code', 'architecture']);
+    });
   });
 
   describe('loadCouncilConfig', () => {
@@ -102,6 +120,34 @@ anti_pattern:
       expect(config.memory?.archiveThreshold).toBe(30);
       expect(config.antiPattern?.enabled).toBe(true);
       expect(config.antiPattern?.detectionModel).toBe('claude-haiku-4-5-20251001');
+    });
+
+    it('parses participation config', () => {
+      const yamlContent = `
+gateway:
+  thinking_window_ms: 3000
+  random_delay_ms: [1000, 2000]
+  max_inter_agent_rounds: 2
+  context_window_turns: 8
+  session_max_turns: 15
+anti_sycophancy:
+  disagreement_threshold: 0.2
+  consecutive_low_rounds: 3
+  challenge_angles: [cost, risk]
+roles:
+  default_2_agents: [advocate, critic]
+  topic_overrides: {}
+participation:
+  max_agents_per_turn: 4
+  min_agents_per_turn: 2
+  recruitment_message: false
+  listener_agent: huahua
+`;
+      writeFileSync(join(testDir, 'council3.yaml'), yamlContent);
+      const config = loadCouncilConfig(join(testDir, 'council3.yaml'));
+      expect(config.participation?.maxAgentsPerTurn).toBe(4);
+      expect(config.participation?.recruitmentMessage).toBe(false);
+      expect(config.participation?.listenerAgent).toBe('huahua');
     });
   });
 });

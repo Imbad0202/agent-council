@@ -17,6 +17,8 @@ export function loadAgentConfig(filePath: string): AgentConfig {
     model: parsed.model,
     memoryDir: parsed.memory_dir,
     personality: parsed.personality.trim(),
+    botTokenEnv: parsed.bot_token_env,
+    topics: parsed.topics,
   };
 }
 
@@ -54,6 +56,12 @@ export function loadCouncilConfig(filePath: string): CouncilConfig {
       detectionModel: parsed.anti_pattern?.detection_model ?? 'claude-haiku-4-5-20251001',
       startAfterTurn: parsed.anti_pattern?.start_after_turn ?? 3,
       detectEveryNTurns: parsed.anti_pattern?.detect_every_n_turns ?? 2,
+    },
+    participation: {
+      maxAgentsPerTurn: parsed.participation?.max_agents_per_turn ?? 3,
+      minAgentsPerTurn: parsed.participation?.min_agents_per_turn ?? 2,
+      recruitmentMessage: parsed.participation?.recruitment_message ?? true,
+      listenerAgent: parsed.participation?.listener_agent ?? '',
     },
   };
 }
