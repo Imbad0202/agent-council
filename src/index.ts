@@ -4,7 +4,6 @@ import { readdirSync } from 'node:fs';
 import { loadAgentConfig, loadCouncilConfig } from './config.js';
 import { createProvider } from './worker/providers/factory.js';
 import { AgentWorker } from './worker/agent-worker.js';
-import { BotManager } from './telegram/bot.js';
 import { MemoryDB } from './memory/db.js';
 import { UsageTracker } from './memory/tracker.js';
 import { ParticipationManager } from './council/participation.js';
@@ -16,11 +15,19 @@ import { FacilitatorAgent } from './council/facilitator.js';
 import { ActiveRecall } from './memory/active-recall.js';
 import { ExecutionDispatcher } from './execution/dispatcher.js';
 import { ExecutionReviewer } from './execution/reviewer.js';
+import { parseArgs, createAdapter } from './adapters/factory.js';
+import { buildRichMetadata } from './adapters/metadata.js';
+import type { AdapterFactoryConfig } from './adapters/factory.js';
 import type { LLMProvider } from './types.js';
 
 async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  console.log(`Adapter: ${args.adapter}`);
+
   const groupChatId = Number(process.env.TELEGRAM_GROUP_CHAT_ID);
-  if (!groupChatId) throw new Error('TELEGRAM_GROUP_CHAT_ID is required');
+  if (args.adapter === 'telegram' && !groupChatId) {
+    throw new Error('TELEGRAM_GROUP_CHAT_ID is required for Telegram adapter');
+  }
 
   const memorySyncPath = process.env.MEMORY_SYNC_PATH;
   if (!memorySyncPath) console.log('MEMORY_SYNC_PATH not set — running without external memory');
@@ -60,21 +67,23 @@ async function main() {
     facilitatorWorker = new AgentWorker(facilitatorConfig, provider, memorySyncPath ?? '');
   }
 
-  // Bot manager: one bot per agent (all agents including facilitator)
+  // Adapter: abstracts Telegram / CLI transport
   const listenerAgent = councilConfig.participation?.listenerAgent || agentConfigs[0].id;
-  const botManager = new BotManager({
-    groupChatId,
-    agents: agentConfigs,
-    listenerAgentId: listenerAgent,
-  });
+  const adapterConfig: AdapterFactoryConfig = {
+    cli: { verbose: args.verbose },
+    telegram: {
+      groupChatId,
+      agents: agentConfigs,
+      listenerAgentId: listenerAgent,
+    },
+  };
+  const adapter = createAdapter(args.adapter, adapterConfig);
 
-  console.log(`Bot manager: ${botManager.getBotCount()} bots, listener: ${listenerAgent}`);
+  console.log(`Adapter "${args.adapter}" created, listener: ${listenerAgent}`);
 
-  // Agent name lookup (O(1) instead of O(n) per send)
-  const agentNameMap = new Map(agentConfigs.map((a) => [a.id, a.name]));
   const sendFn = async (agentId: string, content: string, threadId?: number) => {
-    const agentName = agentNameMap.get(agentId) ?? agentId;
-    await botManager.sendMessage(agentId, agentName, content, threadId);
+    const metadata = buildRichMetadata(agentId, agentConfigs);
+    await adapter.send(agentId, content, metadata, threadId);
   };
 
   // ── Event-driven wiring ──────────────────────────────────────────────
@@ -133,39 +142,18 @@ async function main() {
   const router = new GatewayRouter(bus, sendFn, councilConfig);
   console.log('GatewayRouter initialized (event-driven)');
 
-  // ── Telegram startup ─────────────────────────────────────────────────
-
-  botManager.setupListener(router);
-
-  const listenerBot = botManager.getListenerBot();
+  // ── Adapter startup ──────────────────────────────────────────────────
 
   console.log('Agent Council v0.2.0 starting...');
-  console.log(`Group chat ID: ${groupChatId}`);
 
-  await listenerBot.api.deleteWebhook({ drop_pending_updates: true });
-
-  console.log('Waiting for clean Telegram polling slot...');
-  for (let attempt = 1; attempt <= 6; attempt++) {
-    try {
-      await listenerBot.api.raw.getUpdates({ offset: -1, limit: 1, timeout: 1 });
-      console.log('Polling slot acquired.');
-      break;
-    } catch (err: unknown) {
-      const isConflict = err instanceof Error && err.message.includes('409');
-      if (isConflict && attempt < 6) {
-        console.log(`  Stale connection (attempt ${attempt}/6), waiting 5s...`);
-        await new Promise((r) => setTimeout(r, 5_000));
-      } else if (!isConflict) {
-        break;
-      } else {
-        console.log('  Could not acquire clean slot, starting anyway...');
-      }
-    }
-  }
-
-  await listenerBot.start({
-    drop_pending_updates: true,
-    onStart: () => console.log('Agent Council v0.2.0 is running! Send a message in the Telegram group.'),
+  await adapter.start((msg) => {
+    router.handleHumanMessage({
+      id: `${args.adapter}-${Date.now()}`,
+      role: 'human',
+      content: msg.content,
+      timestamp: Date.now(),
+      threadId: msg.threadId ?? 0,
+    });
   });
 }
 

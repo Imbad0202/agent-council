@@ -8,6 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
+    "cli": "node dist/index.js --adapter=cli",
+    "cli:verbose": "node dist/index.js --adapter=cli --verbose",
     "test": "vitest run",
     "test:watch": "vitest"
   },
