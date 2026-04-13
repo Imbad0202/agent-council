@@ -11,6 +11,7 @@ const AGENT_COLORS: Record<string, (text: string) => string> = {
   binbin: chalk.yellow,
   facilitator: chalk.magenta,
 };
+const AGENT_COLOR_KEYS = Object.keys(AGENT_COLORS);
 
 export class CliAdapter implements InputAdapter, OutputAdapter {
   verbose: boolean;
@@ -51,9 +52,8 @@ export class CliAdapter implements InputAdapter, OutputAdapter {
   }
 
   formatAgentMessage(content: string, metadata: RichMetadata): string {
-    // Try to match by agentId key in AGENT_COLORS, or by checking if agentName contains a key
     const colorFn = AGENT_COLORS[metadata.agentName]
-      ?? AGENT_COLORS[Object.keys(AGENT_COLORS).find(k => metadata.agentName.includes(k)) ?? '']
+      ?? AGENT_COLORS[AGENT_COLOR_KEYS.find(k => metadata.agentName.includes(k)) ?? '']
       ?? chalk.white;
     const roleTag = metadata.role ? ` [${metadata.role}]` : '';
     const header = colorFn(`${metadata.agentName}${roleTag} >`);

@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentRole, ResponseClassification } from '../types.js';
+import type { AgentRole, ResponseClassification } from '../types.js';
 import type { RichMetadata } from './types.js';
 
 export function deriveEmotion(classification?: ResponseClassification): RichMetadata['emotion'] {
@@ -22,14 +22,13 @@ export function deriveStanceShift(
 
 export function buildRichMetadata(
   agentId: string,
-  agents: AgentConfig[],
+  agentNameMap: Map<string, string>,
   classification?: ResponseClassification,
   previousClassification?: ResponseClassification,
   role?: AgentRole,
 ): RichMetadata {
-  const agent = agents.find((a) => a.id === agentId);
   return {
-    agentName: agent?.name ?? agentId,
+    agentName: agentNameMap.get(agentId) ?? agentId,
     role,
     emotion: deriveEmotion(classification),
     stanceShift: deriveStanceShift(classification, previousClassification),

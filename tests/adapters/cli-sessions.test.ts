@@ -61,7 +61,7 @@ describe('CliSessionManager', () => {
       expect(session.topic).toBe('typescript');
       expect(session.outcome).toBe('adopt');
       expect(session.confidence).toBe(0.85);
-      expect(session.history).toEqual(sampleHistory);
+      expect(session.messageCount).toBe(sampleHistory.length);
       expect(session.savedAt).toBeDefined();
       expect(new Date(session.savedAt).toISOString()).toBe(session.savedAt);
     });
@@ -101,7 +101,7 @@ describe('CliSessionManager', () => {
       expect(session).toHaveProperty('outcome');
       expect(session).toHaveProperty('confidence');
       expect(session).toHaveProperty('savedAt');
-      expect(session).toHaveProperty('history');
+      expect(session).toHaveProperty('messageCount');
     });
   });
 

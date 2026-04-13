@@ -10,6 +10,14 @@ export interface SavedSession {
   history: CouncilMessage[];
 }
 
+export interface SessionSummary {
+  topic: string;
+  outcome: string;
+  confidence: number;
+  savedAt: string;
+  messageCount: number;
+}
+
 export class CliSessionManager {
   private sessionsDir: string;
 
@@ -25,31 +33,38 @@ export class CliSessionManager {
     writeFileSync(join(this.sessionsDir, filename), JSON.stringify(session, null, 2), 'utf-8');
   }
 
-  list(): SavedSession[] {
-    if (!existsSync(this.sessionsDir)) return [];
-    const files = readdirSync(this.sessionsDir)
-      .filter((f) => f.startsWith('cli-') && f.endsWith('.json'))
-      .sort()
-      .reverse();
-    return files.map((f) => JSON.parse(readFileSync(join(this.sessionsDir, f), 'utf-8')) as SavedSession);
+  list(): SessionSummary[] {
+    const files = this.getSessionFiles();
+    return files.map((f) => {
+      const session = JSON.parse(readFileSync(join(this.sessionsDir, f), 'utf-8')) as SavedSession;
+      return {
+        topic: session.topic,
+        outcome: session.outcome,
+        confidence: session.confidence,
+        savedAt: session.savedAt,
+        messageCount: session.history.length,
+      };
+    });
   }
 
   load(index: number): SavedSession | null {
-    const files = readdirSync(this.sessionsDir)
-      .filter((f) => f.startsWith('cli-') && f.endsWith('.json'))
-      .sort()
-      .reverse();
+    const files = this.getSessionFiles();
     if (index < 0 || index >= files.length) return null;
     return JSON.parse(readFileSync(join(this.sessionsDir, files[index]), 'utf-8')) as SavedSession;
   }
 
   delete(index: number): boolean {
-    const files = readdirSync(this.sessionsDir)
-      .filter((f) => f.startsWith('cli-') && f.endsWith('.json'))
-      .sort()
-      .reverse();
+    const files = this.getSessionFiles();
     if (index < 0 || index >= files.length) return false;
     unlinkSync(join(this.sessionsDir, files[index]));
     return true;
+  }
+
+  private getSessionFiles(): string[] {
+    if (!existsSync(this.sessionsDir)) return [];
+    return readdirSync(this.sessionsDir)
+      .filter((f) => f.startsWith('cli-') && f.endsWith('.json'))
+      .sort()
+      .reverse();
   }
 }
