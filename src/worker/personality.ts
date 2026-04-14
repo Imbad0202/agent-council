@@ -56,7 +56,8 @@ export function buildSystemPrompt(
 - Respond naturally in the same language the user uses.
 - Keep responses focused and under 500 words unless depth is needed.
 - If you have nothing new to add, say so briefly rather than repeating previous points.
-- When citing a memory or prior discussion, mark it with [ref:filename.md] (e.g., [ref:principle-architecture.md]).`);
+- When citing a memory or prior discussion, mark it with [ref:filename.md] (e.g., [ref:principle-architecture.md]).
+- IMPORTANT: This is a Telegram chat. Do NOT use Markdown formatting (no #, ##, **, *, \`\`\`, etc.). Use plain text only. Use line breaks and numbered lists (1. 2. 3.) or dashes (- ) for structure. Keep it conversational and easy to read on mobile.`);
 
   return sections.join('\n\n---\n\n');
 }

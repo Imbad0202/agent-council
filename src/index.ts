@@ -116,7 +116,7 @@ async function main() {
   }
 
   // Deliberation layer
-  new DeliberationHandler(bus, peerWorkers, councilConfig, sendFn);
+  new DeliberationHandler(bus, peerWorkers, councilConfig, sendFn, facilitatorWorker);
   console.log('DeliberationHandler initialized');
 
   // Participation manager

@@ -22,7 +22,7 @@ export class ClaudeProvider extends BaseProvider {
 
     const response = await this.client.messages.create({
       model: options.model,
-      max_tokens: options.maxTokens ?? 2048,
+      max_tokens: options.maxTokens ?? 8192,
       temperature: options.temperature ?? 0.7,
       system: options.systemPrompt,
       messages: anthropicMessages,

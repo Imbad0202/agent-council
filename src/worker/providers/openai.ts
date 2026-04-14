@@ -23,11 +23,18 @@ export class OpenAIProvider extends BaseProvider {
     const response = await this.client.chat.completions.create({
       model: options.model,
       messages: openaiMessages,
-      max_tokens: options.maxTokens ?? 2048,
+      max_completion_tokens: options.maxTokens ?? 16384,
       temperature: options.temperature ?? 0.7,
     });
 
-    const content = response.choices[0]?.message?.content ?? '';
+    const choice = response.choices[0];
+    let content = choice?.message?.content ?? '';
+
+    // Debug: log if content is empty
+    if (!content.trim()) {
+      console.error(`[OpenAI] Empty response from ${options.model}. finish_reason: ${choice?.finish_reason}, refusal: ${choice?.message?.refusal ?? 'none'}`);
+      content = `（${options.model} 未回傳內容，finish_reason: ${choice?.finish_reason ?? 'unknown'}）`;
+    }
 
     return {
       content,

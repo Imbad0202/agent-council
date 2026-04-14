@@ -52,23 +52,43 @@ export class BotManager {
     });
   }
 
+  private splitMessage(text: string, maxLength = 4096): string[] {
+    if (text.length <= maxLength) return [text];
+    const chunks: string[] = [];
+    let remaining = text;
+    while (remaining.length > 0) {
+      if (remaining.length <= maxLength) {
+        chunks.push(remaining);
+        break;
+      }
+      // Try to split at last newline within limit
+      let splitAt = remaining.lastIndexOf('\n', maxLength);
+      if (splitAt <= 0) splitAt = maxLength;
+      chunks.push(remaining.slice(0, splitAt));
+      remaining = remaining.slice(splitAt).replace(/^\n/, '');
+    }
+    return chunks;
+  }
+
   async sendMessage(agentId: string, agentName: string, content: string, threadId?: number): Promise<void> {
     const bot = this.bots.get(agentId);
+    const opts = threadId ? { message_thread_id: threadId } : {};
+
     if (!bot) {
       // Fallback to any available bot
       const fallbackBot = this.bots.values().next().value;
       if (!fallbackBot) return;
       const formatted = `🤖 ${agentName}\n\n${content}`;
-      await fallbackBot.api.sendMessage(this.groupChatId, formatted, {
-        ...(threadId ? { message_thread_id: threadId } : {}),
-      });
+      for (const chunk of this.splitMessage(formatted)) {
+        await fallbackBot.api.sendMessage(this.groupChatId, chunk, opts);
+      }
       return;
     }
 
     // When using per-agent bots, no need for name prefix — bot identity IS the name
-    await bot.api.sendMessage(this.groupChatId, content, {
-      ...(threadId ? { message_thread_id: threadId } : {}),
-    });
+    for (const chunk of this.splitMessage(content)) {
+      await bot.api.sendMessage(this.groupChatId, chunk, opts);
+    }
   }
 
   getListenerBot(): Bot {

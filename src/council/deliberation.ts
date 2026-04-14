@@ -7,6 +7,7 @@ import type {
   Complexity,
   IntentType,
   ResponseClassification,
+  ProviderResponse,
 } from '../types.js';
 import { TurnManager } from '../gateway/turn-manager.js';
 import { AntiSycophancyEngine } from './anti-sycophancy.js';
@@ -26,13 +27,15 @@ interface SessionState {
 export class DeliberationHandler {
   private bus: EventBus;
   private workers: AgentWorker[];
+  private facilitatorWorker: AgentWorker | undefined;
   private config: CouncilConfig;
   private sendFn: SendFn;
   private sessions: Map<number, SessionState> = new Map();
 
-  constructor(bus: EventBus, workers: AgentWorker[], config: CouncilConfig, sendFn: SendFn) {
+  constructor(bus: EventBus, workers: AgentWorker[], config: CouncilConfig, sendFn: SendFn, facilitatorWorker?: AgentWorker) {
     this.bus = bus;
     this.workers = workers;
+    this.facilitatorWorker = facilitatorWorker;
     this.config = config;
     this.sendFn = sendFn;
 
@@ -42,8 +45,11 @@ export class DeliberationHandler {
       this.runDeliberation(payload.threadId, payload.message, payload.intent, payload.complexity);
     });
 
-    // Subscribe to facilitator.intervened — add facilitator messages to history
+    // Subscribe to facilitator.intervened — only add non-structure messages to history
+    // Structure announcements (opening messages) are display-only, not part of deliberation context
     this.bus.on('facilitator.intervened', (payload) => {
+      if (payload.action === 'structure') return;
+
       const session = this.sessions.get(payload.threadId);
       if (!session) return;
 
@@ -115,92 +121,119 @@ export class DeliberationHandler {
       structure: 'free',
     });
 
-    // Generate agent responses (parallel LLM calls)
-    const responses = await Promise.all(
-      activeWorkers.map(async (worker) => {
-        const role = currentRoles[worker.id];
+    // Sequential deliberation: first agent responds to human, second agent responds to both
+    const responses: Array<{ worker: AgentWorker; role: AgentRole; response: ProviderResponse }> = [];
 
-        // Emit agent.responding
-        this.bus.emit('agent.responding', { threadId, agentId: worker.id, role });
+    for (const worker of activeWorkers) {
+      const role = currentRoles[worker.id];
 
-        // Build challenge prompt from anti-sycophancy
-        const lastAgentMsg = [...session.conversationHistory]
-          .reverse()
-          .find((m) => m.role === 'agent' && m.agentId !== worker.id);
+      // Emit agent.responding
+      this.bus.emit('agent.responding', { threadId, agentId: worker.id, role });
 
-        let challengePrompt: string | undefined;
-        if (lastAgentMsg) {
-          challengePrompt = session.antiSycophancy.generateChallengePrompt(lastAgentMsg);
-        }
+      // Build challenge prompt from anti-sycophancy
+      const lastAgentMsg = [...session.conversationHistory]
+        .reverse()
+        .find((m) => m.role === 'agent' && m.agentId !== worker.id);
 
-        const convergencePrompt = session.antiSycophancy.checkConvergence();
-        if (convergencePrompt) {
-          challengePrompt = challengePrompt
-            ? `${challengePrompt}\n\n${convergencePrompt}`
-            : convergencePrompt;
-        }
-
-        // Add pattern-detected injection if targeting this worker
-        if (session.pendingPatternInjection?.targetAgent === worker.id) {
-          const patternPrompt = session.pendingPatternInjection.prompt;
-          challengePrompt = challengePrompt
-            ? `${challengePrompt}\n\n${patternPrompt}`
-            : patternPrompt;
-          session.pendingPatternInjection = null;
-        }
-
-        const response = await worker.respond(
-          session.conversationHistory,
-          role,
-          challengePrompt,
-          complexity,
-        );
-
-        return { worker, role, response };
-      }),
-    );
-
-    // Process responses sequentially: push to history, classify, emit, send
-    for (const { worker, role, response } of responses) {
-      if (response.skip) {
-        continue;
+      let challengePrompt: string | undefined;
+      if (lastAgentMsg) {
+        challengePrompt = session.antiSycophancy.generateChallengePrompt(lastAgentMsg);
       }
 
-      const agentMsg: CouncilMessage = {
-        id: `agent-${worker.id}-${Date.now()}`,
-        role: 'agent',
-        agentId: worker.id,
-        content: response.content,
-        timestamp: Date.now(),
-        threadId,
-        metadata: {
-          assignedRole: currentRoles[worker.id],
-          confidence: response.confidence,
-          references: response.references,
-        },
-      };
+      const convergencePrompt = session.antiSycophancy.checkConvergence();
+      if (convergencePrompt) {
+        challengePrompt = challengePrompt
+          ? `${challengePrompt}\n\n${convergencePrompt}`
+          : convergencePrompt;
+      }
 
-      session.conversationHistory.push(agentMsg);
-      session.turnManager.recordAgentTurn(worker.id);
-      session.turnManager.enqueueResponse(worker.id, response.content);
+      // Add pattern-detected injection if targeting this worker
+      if (session.pendingPatternInjection?.targetAgent === worker.id) {
+        const patternPrompt = session.pendingPatternInjection.prompt;
+        challengePrompt = challengePrompt
+          ? `${challengePrompt}\n\n${patternPrompt}`
+          : patternPrompt;
+        session.pendingPatternInjection = null;
+      }
 
-      const classification = session.antiSycophancy.classifyResponse(response.content);
-      session.antiSycophancy.recordClassification(classification);
-
-      // Emit agent.responded
-      this.bus.emit('agent.responded', {
-        threadId,
-        agentId: worker.id,
-        response,
+      const response = await worker.respond(
+        session.conversationHistory,
         role,
-        classification,
-      });
+        challengePrompt,
+        complexity,
+      );
+
+      if (!response.skip) {
+        const agentMsg: CouncilMessage = {
+          id: `agent-${worker.id}-${Date.now()}`,
+          role: 'agent',
+          agentId: worker.id,
+          content: response.content,
+          timestamp: Date.now(),
+          threadId,
+          metadata: {
+            assignedRole: currentRoles[worker.id],
+            confidence: response.confidence,
+            references: response.references,
+          },
+        };
+
+        // Push to history BEFORE next agent — so next agent sees this response
+        session.conversationHistory.push(agentMsg);
+        session.turnManager.recordAgentTurn(worker.id);
+
+        // Send to Telegram immediately
+        await this.sendFn(worker.id, response.content, threadId);
+
+        const classification = session.antiSycophancy.classifyResponse(response.content);
+        session.antiSycophancy.recordClassification(classification);
+
+        // Emit agent.responded
+        this.bus.emit('agent.responded', {
+          threadId,
+          agentId: worker.id,
+          response,
+          role,
+          classification,
+        });
+      }
+
+      responses.push({ worker, role, response });
     }
 
-    // Flush queue — send to user via sendFn
-    await session.turnManager.flushQueue(async (agentId, content) => {
-      await this.sendFn(agentId, content, threadId);
-    });
+    // Facilitator summary — ask if user wants another round
+    if (!this.facilitatorWorker) {
+      // No facilitator, just end
+      const lastResponse = responses.filter((r) => !r.response.skip).pop();
+      const conclusion = lastResponse
+        ? lastResponse.response.content.slice(0, 200)
+        : 'No responses generated';
+      this.bus.emit('deliberation.ended', { threadId, conclusion, intent });
+      return;
+    }
+
+    // Build summary prompt for facilitator
+    const recentAgentMsgs = responses
+      .filter((r) => !r.response.skip)
+      .map((r) => `${r.worker.name}: ${r.response.content}`)
+      .join('\n\n---\n\n');
+
+    const summaryMsg: CouncilMessage = {
+      id: `facilitator-summary-${Date.now()}`,
+      role: 'human',
+      content: `以下是本輪討論：\n\n${recentAgentMsgs}\n\n請用 200 字以內總結雙方觀點的交集與分歧，然後問用戶是否要再進行一輪辯論。用繁體中文回應。`,
+      timestamp: Date.now(),
+      threadId,
+    };
+
+    try {
+      const summaryResponse = await this.facilitatorWorker.respond([summaryMsg], 'synthesizer', undefined, complexity);
+      if (summaryResponse.content.trim()) {
+        await this.sendFn('facilitator', summaryResponse.content, threadId);
+      }
+    } catch {
+      // Facilitator summary failed — skip silently
+    }
 
     // Build conclusion from last agent response
     const lastResponse = responses.filter((r) => !r.response.skip).pop();
