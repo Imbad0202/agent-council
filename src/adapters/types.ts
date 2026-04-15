@@ -23,6 +23,8 @@ export interface InputAdapter {
 export interface OutputAdapter {
   send(agentId: string, content: string, metadata: RichMetadata, threadId?: number): Promise<void>;
   sendSystem(content: string, threadId?: number): Promise<void>;
+  sendMessageWithKeyboard?: (agentId: string, content: string, keyboard: unknown, threadId?: number) => Promise<void>;
+  setBlindReviewWiring?: (wiring: unknown) => void;
 }
 
 export type Adapter = InputAdapter & OutputAdapter;

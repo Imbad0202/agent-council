@@ -24,8 +24,8 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
     });
   }
 
-  setBlindReviewWiring(wiring: BlindReviewWiring): void {
-    this.blindReviewWiring = wiring;
+  setBlindReviewWiring(wiring: unknown): void {
+    this.blindReviewWiring = wiring as BlindReviewWiring;
   }
 
   async start(onMessage: (msg: AdapterMessage) => void): Promise<void> {
@@ -70,10 +70,10 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
   async sendMessageWithKeyboard(
     agentId: string,
     content: string,
-    keyboard: InlineKeyboard,
+    keyboard: unknown,
     threadId?: number,
   ): Promise<void> {
-    await this.botManager.sendMessageWithKeyboard(agentId, content, keyboard, threadId);
+    await this.botManager.sendMessageWithKeyboard(agentId, content, keyboard as InlineKeyboard, threadId);
   }
 
   async stop(): Promise<void> {
