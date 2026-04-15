@@ -60,6 +60,23 @@ describe('blind-review module', () => {
     expect(second).toHaveProperty('error');
   });
 
+  it('formatRevealMessage prefers session role over agentMeta tbd placeholder', () => {
+    const session: BlindReviewSession = {
+      threadId: 7,
+      startedAt: 0,
+      codeToAgentId: new Map([['Agent-A', 'a-id']]),
+      agentIdToRole: new Map([['a-id', 'critic']]),  // real per-round role
+      scores: new Map([['Agent-A', 4]]),
+      revealed: false,
+    };
+    const meta = new Map([
+      ['a-id', { name: 'Claude', role: 'tbd' }],  // placeholder from index.ts
+    ]);
+    const msg = formatRevealMessage(session, meta);
+    expect(msg).toContain('critic');
+    expect(msg).not.toContain('tbd');
+  });
+
   it('formatRevealMessage maps codes to names + roles + scores', () => {
     const session: BlindReviewSession = {
       threadId: 6,

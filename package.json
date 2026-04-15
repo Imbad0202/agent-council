@@ -1,6 +1,6 @@
 {
   "name": "agent-council",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "1 human + N AI agents collaborating naturally in a Telegram group chat",
   "type": "module",
   "main": "dist/index.js",

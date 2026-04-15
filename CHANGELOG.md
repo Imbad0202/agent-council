@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-04-15
+
+### Fixed
+- `formatRevealMessage` now uses the per-round role from `BlindReviewSession.agentIdToRole` instead of the `'tbd'` placeholder set at startup in `agentMeta`. Previously every blind-review reveal showed `role: tbd` for all agents.
+- Stress-test branch in `deliberation.ts` no longer calls `assignRoles` twice (the first result was discarded).
+- `blind-review.scored` and `blind-review.revealed` events are now actually emitted (declared in `EventMap` but never fired).
+- `br-score:` callback regex tightened (`(.+)` → `[^:]+`) to prevent future code formats containing `:` from being mis-parsed.
+
+### Changed
+- `SNEAKY_TRAILER_PREFIX` extracted as a single source of truth shared by the parser regex and the directive prompt (drift risk eliminated).
+- `buildStressTestHandler` and `buildBlindReviewHandler` deduplicated via private `buildCommandHandler` factory in `src/telegram/bot.ts`.
+- `OutputAdapter` interface gained optional `sendMessageWithKeyboard` and `setBlindReviewWiring` capability fields; `src/index.ts` now duck-types instead of `instanceof TelegramAdapter`.
+- `DeliberationHandler` constructor's trailing optional positional params (`facilitatorWorker`, `sendKeyboardFn`) consolidated into a single options bag at position 5.
+
+### Docs
+- `BlindReviewStore` lifecycle documented (revealed sessions are kept, not deleted, so post-reveal `/cancelreview` is a safe no-op).
+
 ## [0.3.0] - 2026-04-15
 
 ### Added

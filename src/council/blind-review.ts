@@ -32,6 +32,20 @@ export function assignCodes(agentIds: string[]): Map<string, string> {
   return result;
 }
 
+/**
+ * In-memory store of blind-review sessions, keyed by threadId.
+ *
+ * Lifecycle:
+ *   1. create() — start a new session (rejects if pending one exists)
+ *   2. recordScore() — accumulate user scores (per code)
+ *   3. markRevealed() — flag the session as complete after reveal broadcast
+ *
+ * Revealed sessions are KEPT in the store, not deleted, so a stale
+ * /cancelreview after reveal is a no-op rather than a confusing error.
+ * They occupy ~200 bytes each and are bounded by chat lifetime; bot
+ * restart clears the store. Explicit deletion happens only via
+ * /cancelreview on a still-pending session.
+ */
 export class BlindReviewStore {
   private sessions = new Map<number, BlindReviewSession>();
 
@@ -98,10 +112,11 @@ export function formatRevealMessage(
 ): string {
   const lines: string[] = ['🎭 Blind Review Reveal', ''];
   for (const [code, agentId] of session.codeToAgentId.entries()) {
-    const meta = agentMeta.get(agentId) ?? { name: agentId, role: session.agentIdToRole.get(agentId) ?? 'unknown' };
+    const name = agentMeta.get(agentId)?.name ?? agentId;
+    const role = session.agentIdToRole.get(agentId) ?? agentMeta.get(agentId)?.role ?? 'unknown';
     const score = session.scores.get(code);
     const scoreStr = score !== undefined ? `your score: ${score}★` : 'not scored';
-    lines.push(`${code} → ${meta.name} (role: ${meta.role}) — ${scoreStr}`);
+    lines.push(`${code} → ${name} (role: ${role}) — ${scoreStr}`);
   }
   lines.push('');
   lines.push('(Identities revealed; scores recorded for this round.)');
