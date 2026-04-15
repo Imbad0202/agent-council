@@ -121,20 +121,17 @@ export class DeliberationHandler {
 
     // Assign roles
     const agentIds = activeWorkers.map((w) => w.id);
-    let currentRoles = assignRoles(agentIds, message.content, this.config);
-
-    // Stress-test mode: override one agent to sneaky-prover
     const stressTestMode = message?.stressTest === true;
     const debriefs: DebriefRecord[] = [];
+    let currentRoles = assignRoles(
+      agentIds,
+      message.content,
+      this.config,
+      undefined,
+      stressTestMode ? { allowSneaky: true } : undefined,
+    );
     if (stressTestMode && Object.keys(currentRoles).length >= 2) {
       const targetAgentId = pickSneakyTarget(Object.keys(currentRoles));
-      currentRoles = assignRoles(
-        agentIds,
-        message.content,
-        this.config,
-        undefined,
-        { allowSneaky: true },
-      );
       currentRoles[targetAgentId] = 'sneaky-prover';
     }
 
