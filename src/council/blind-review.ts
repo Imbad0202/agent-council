@@ -98,10 +98,11 @@ export function formatRevealMessage(
 ): string {
   const lines: string[] = ['🎭 Blind Review Reveal', ''];
   for (const [code, agentId] of session.codeToAgentId.entries()) {
-    const meta = agentMeta.get(agentId) ?? { name: agentId, role: session.agentIdToRole.get(agentId) ?? 'unknown' };
+    const name = agentMeta.get(agentId)?.name ?? agentId;
+    const role = session.agentIdToRole.get(agentId) ?? agentMeta.get(agentId)?.role ?? 'unknown';
     const score = session.scores.get(code);
     const scoreStr = score !== undefined ? `your score: ${score}★` : 'not scored';
-    lines.push(`${code} → ${meta.name} (role: ${meta.role}) — ${scoreStr}`);
+    lines.push(`${code} → ${name} (role: ${role}) — ${scoreStr}`);
   }
   lines.push('');
   lines.push('(Identities revealed; scores recorded for this round.)');
