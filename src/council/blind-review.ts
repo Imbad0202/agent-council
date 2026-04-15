@@ -32,6 +32,20 @@ export function assignCodes(agentIds: string[]): Map<string, string> {
   return result;
 }
 
+/**
+ * In-memory store of blind-review sessions, keyed by threadId.
+ *
+ * Lifecycle:
+ *   1. create() — start a new session (rejects if pending one exists)
+ *   2. recordScore() — accumulate user scores (per code)
+ *   3. markRevealed() — flag the session as complete after reveal broadcast
+ *
+ * Revealed sessions are KEPT in the store, not deleted, so a stale
+ * /cancelreview after reveal is a no-op rather than a confusing error.
+ * They occupy ~200 bytes each and are bounded by chat lifetime; bot
+ * restart clears the store. Explicit deletion happens only via
+ * /cancelreview on a still-pending session.
+ */
 export class BlindReviewStore {
   private sessions = new Map<number, BlindReviewSession>();
 
