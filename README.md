@@ -264,6 +264,18 @@ docker run -d --env-file .env -v ./data:/app/data -v ./config:/app/config agent-
 
 Mount `data/` to persist brain.db and session summaries. Mount `config/` to customize agents and council settings.
 
+## Stress test mode
+
+The `sneaky-prover` role generates a plausible-but-wrong response on purpose, so the council and user can practice spotting subtle errors. Trigger via Telegram:
+
+```
+/stresstest your question here
+```
+
+One randomly-selected agent will play sneaky-prover for that round. After the round, the bot posts a `🔒 [SNEAKY DEBRIEF]` message revealing the planted error.
+
+Inspired by Kirchner et al. 2024, [*Prover-Verifier Games improve legibility of LLM outputs*](https://arxiv.org/abs/2407.13692).
+
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
