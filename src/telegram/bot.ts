@@ -1,6 +1,28 @@
-import { Bot } from 'grammy';
+import { Bot, Context } from 'grammy';
 import { createCouncilMessageFromTelegram } from './handlers.js';
 import type { AgentConfig, CouncilMessage } from '../types.js';
+
+export function buildStressTestHandler(
+  groupChatId: number,
+  handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+
+    const message = ctx.match?.toString().trim() ?? '';
+    if (!message) {
+      await ctx.reply(
+        'Usage: /stresstest <your question>\nOne agent will play sneaky-prover (planted plausible error) so you can practice spotting it.',
+      );
+      return;
+    }
+
+    if (!ctx.message) return;
+    const councilMsg = createCouncilMessageFromTelegram(ctx.message, { stressTest: true });
+    handler.handleHumanMessage(councilMsg);
+  };
+}
 
 interface MultiBotConfig {
   groupChatId: number;
@@ -42,6 +64,8 @@ export class BotManager {
     if (!listenerBot) {
       throw new Error(`Listener bot not found for agent: ${this.listenerAgentId}`);
     }
+
+    listenerBot.command('stresstest', buildStressTestHandler(this.groupChatId, handler));
 
     listenerBot.on('message:text', async (ctx) => {
       if (ctx.chat.id !== this.groupChatId) return;

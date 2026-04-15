@@ -8,13 +8,17 @@ interface TelegramMessage {
   message_thread_id?: number;
 }
 
-export function createCouncilMessageFromTelegram(msg: TelegramMessage): CouncilMessage {
+export function createCouncilMessageFromTelegram(
+  msg: TelegramMessage,
+  options?: { stressTest?: boolean },
+): CouncilMessage {
   return {
     id: `tg-${msg.message_id}`,
     role: 'human',
     content: msg.text ?? '',
     timestamp: msg.date * 1000,
     threadId: msg.message_thread_id,
+    ...(options?.stressTest ? { stressTest: true } : {}),
   };
 }
 
