@@ -1,4 +1,6 @@
 import { BotManager } from '../telegram/bot.js';
+import type { BlindReviewWiring } from '../telegram/bot.js';
+import { InlineKeyboard } from 'grammy';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import type { InputAdapter, OutputAdapter, AdapterMessage, RichMetadata } from './types.js';
 
@@ -11,6 +13,7 @@ export interface TelegramAdapterConfig {
 export class TelegramAdapter implements InputAdapter, OutputAdapter {
   private botManager: BotManager;
   private config: TelegramAdapterConfig;
+  private blindReviewWiring: BlindReviewWiring | undefined;
 
   constructor(config: TelegramAdapterConfig) {
     this.config = config;
@@ -21,13 +24,20 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
     });
   }
 
+  setBlindReviewWiring(wiring: BlindReviewWiring): void {
+    this.blindReviewWiring = wiring;
+  }
+
   async start(onMessage: (msg: AdapterMessage) => void): Promise<void> {
     const listenerBot = this.botManager.getListenerBot();
-    this.botManager.setupListener({
-      handleHumanMessage: (councilMsg: CouncilMessage) => {
-        onMessage({ content: councilMsg.content, threadId: councilMsg.threadId });
+    this.botManager.setupListener(
+      {
+        handleHumanMessage: (councilMsg: CouncilMessage) => {
+          onMessage({ content: councilMsg.content, threadId: councilMsg.threadId });
+        },
       },
-    });
+      this.blindReviewWiring,
+    );
     await listenerBot.api.deleteWebhook({ drop_pending_updates: true });
     for (let attempt = 1; attempt <= 6; attempt++) {
       try {
@@ -55,6 +65,15 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
 
   async sendSystem(content: string, threadId?: number): Promise<void> {
     await this.botManager.sendMessage('system', 'System', content, threadId);
+  }
+
+  async sendMessageWithKeyboard(
+    agentId: string,
+    content: string,
+    keyboard: InlineKeyboard,
+    threadId?: number,
+  ): Promise<void> {
+    await this.botManager.sendMessageWithKeyboard(agentId, content, keyboard, threadId);
   }
 
   async stop(): Promise<void> {

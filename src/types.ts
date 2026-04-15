@@ -1,4 +1,4 @@
-export type AgentRole = 'advocate' | 'critic' | 'analyst' | 'synthesizer' | 'author' | 'reviewer';
+export type AgentRole = 'advocate' | 'critic' | 'analyst' | 'synthesizer' | 'author' | 'reviewer' | 'sneaky-prover';
 
 export type IntentType = 'deliberation' | 'quick-answer' | 'implementation' | 'investigation' | 'meta';
 export type Complexity = 'low' | 'medium' | 'high';
@@ -19,6 +19,8 @@ export interface CouncilMessage {
     confidence?: number;
     references?: string[];
   };
+  stressTest?: boolean;
+  blindReview?: boolean;
 }
 
 export interface AgentConfig {

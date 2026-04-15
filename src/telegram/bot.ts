@@ -1,6 +1,103 @@
-import { Bot } from 'grammy';
+import { Bot, Context, InlineKeyboard } from 'grammy';
 import { createCouncilMessageFromTelegram } from './handlers.js';
 import type { AgentConfig, CouncilMessage } from '../types.js';
+import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
+
+export interface BlindReviewWiring {
+  store: BlindReviewStore;
+  sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>;
+  agentMeta: Map<string, { name: string; role: string }>;
+}
+
+export function buildStressTestHandler(
+  groupChatId: number,
+  handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+
+    const message = ctx.match?.toString().trim() ?? '';
+    if (!message) {
+      await ctx.reply(
+        'Usage: /stresstest <your question>\nOne agent will play sneaky-prover (planted plausible error) so you can practice spotting it.',
+      );
+      return;
+    }
+
+    if (!ctx.message) return;
+    const councilMsg = createCouncilMessageFromTelegram(ctx.message, { stressTest: true });
+    handler.handleHumanMessage(councilMsg);
+  };
+}
+
+export function buildBlindReviewHandler(
+  groupChatId: number,
+  handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+
+    const message = ctx.match?.toString().trim() ?? '';
+    if (!message) {
+      await ctx.reply(
+        'Usage: /blindreview <your topic>\nAgents respond anonymously (Agent-A, Agent-B, ...). You score each one before identities are revealed.',
+      );
+      return;
+    }
+
+    if (!ctx.message) return;
+    const councilMsg = createCouncilMessageFromTelegram(ctx.message, { blindReview: true });
+    handler.handleHumanMessage(councilMsg);
+  };
+}
+
+export function buildCancelReviewHandler(groupChatId: number, store: BlindReviewStore) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const session = store.get(threadId);
+    if (!session) {
+      await ctx.reply('No blind-review session in progress for this thread.');
+      return;
+    }
+    store.delete(threadId);
+    await ctx.reply('Blind-review session cancelled.');
+  };
+}
+
+export function buildBlindReviewCallback(
+  groupChatId: number,
+  store: BlindReviewStore,
+  sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>,
+  agentMeta: Map<string, { name: string; role: string }>,
+) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (!ctx.match || !Array.isArray(ctx.match)) return;
+    const code = ctx.match[1];
+    const score = parseInt(ctx.match[2], 10);
+    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+
+    const result = store.recordScore(threadId, code, score);
+    if ('error' in result) {
+      await ctx.answerCallbackQuery({ text: result.error });
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: `Recorded ${score}★ for ${code}` });
+
+    if (result.allScored) {
+      const session = store.get(threadId);
+      if (session) {
+        const reveal = formatRevealMessage(session, agentMeta);
+        await sendFn('blind-review-reveal', reveal, threadId);
+        store.markRevealed(threadId);
+      }
+    }
+  };
+}
 
 interface MultiBotConfig {
   groupChatId: number;
@@ -37,11 +134,16 @@ export class BotManager {
     }
   }
 
-  setupListener(handler: { handleHumanMessage: (msg: CouncilMessage) => void }): void {
+  setupListener(
+    handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+    blindReviewWiring?: BlindReviewWiring,
+  ): void {
     const listenerBot = this.bots.get(this.listenerAgentId);
     if (!listenerBot) {
       throw new Error(`Listener bot not found for agent: ${this.listenerAgentId}`);
     }
+
+    listenerBot.command('stresstest', buildStressTestHandler(this.groupChatId, handler));
 
     listenerBot.on('message:text', async (ctx) => {
       if (ctx.chat.id !== this.groupChatId) return;
@@ -50,6 +152,17 @@ export class BotManager {
       const councilMsg = createCouncilMessageFromTelegram(ctx.message);
       handler.handleHumanMessage(councilMsg);
     });
+
+    if (blindReviewWiring) {
+      listenerBot.command('blindreview', buildBlindReviewHandler(this.groupChatId, handler));
+      listenerBot.command('cancelreview', buildCancelReviewHandler(this.groupChatId, blindReviewWiring.store));
+      listenerBot.callbackQuery(/^br-score:(.+):(\d)$/, buildBlindReviewCallback(
+        this.groupChatId,
+        blindReviewWiring.store,
+        blindReviewWiring.sendFn,
+        blindReviewWiring.agentMeta,
+      ));
+    }
   }
 
   private splitMessage(text: string, maxLength = 4096): string[] {
@@ -89,6 +202,21 @@ export class BotManager {
     for (const chunk of this.splitMessage(content)) {
       await bot.api.sendMessage(this.groupChatId, chunk, opts);
     }
+  }
+
+  async sendMessageWithKeyboard(
+    agentId: string,
+    content: string,
+    keyboard: InlineKeyboard,
+    threadId?: number,
+  ): Promise<void> {
+    const bot = this.bots.get(agentId) ?? this.bots.values().next().value;
+    if (!bot) return;
+    const opts: { reply_markup: InlineKeyboard; message_thread_id?: number } = {
+      reply_markup: keyboard,
+    };
+    if (threadId) opts.message_thread_id = threadId;
+    await bot.api.sendMessage(this.groupChatId, content, opts);
   }
 
   getListenerBot(): Bot {

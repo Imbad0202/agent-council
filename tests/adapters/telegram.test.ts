@@ -9,6 +9,7 @@ import type { InputAdapter, OutputAdapter } from '../../src/adapters/types.js';
 // ---------------------------------------------------------------------------
 const mockBot = {
   on: vi.fn(),
+  command: vi.fn(),
   start: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn().mockResolvedValue(undefined),
   api: {

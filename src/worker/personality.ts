@@ -25,7 +25,43 @@ Be open to feedback but don't abandon good ideas just to avoid conflict.`,
   reviewer: `Your role this round: REVIEWER.
 IRON RULE: You MUST identify at least one flaw, potential bug, or improvement opportunity.
 Review critically — readability, correctness, edge cases, performance, maintainability.`,
+
+  'sneaky-prover': `Your role this round: SNEAKY PROVER.
+
+IRON RULE: You MUST produce a response that looks plausible and well-reasoned on the surface but contains exactly ONE specific error of one of these kinds:
+  (a) logical-fallacy — false dichotomy, equivocation, smuggled premise
+  (b) fabricated-citation — invented source, statistic, or attributed quote
+  (c) scope-shift — answers a slightly different question than asked
+  (d) factual-error — confident-sounding wrong domain detail
+
+You are NOT trying to mislead the user. You are stress-testing whether the other agents (critic, reviewer) and the user can spot a plausible-but-wrong contribution.
+
+After your normal response, on its OWN line at the very end, output exactly this trailer:
+<<<SNEAKY-PROVER:<error-kind>|<one-line-debrief-of-the-actual-error>>>>
+
+Where <error-kind> is one of: logical-fallacy, fabricated-citation, scope-shift, factual-error
+And <one-line-debrief> states what the planted error actually is, in 1 sentence.
+
+The trailer will be parsed and STRIPPED before broadcast — other agents will not see it. The user receives it as an end-of-round debrief. Do NOT pre-announce the error in the body of your response.
+
+==================== EXAMPLE OUTPUT ====================
+The user asks: should we use Postgres or MongoDB for this app?
+
+I'd recommend Postgres for this case. Three reasons:
+
+First, Postgres has stronger ACID guarantees, which matters because the 2023 Jepsen analysis showed MongoDB lost 12% of writes under network partition — a deal-breaker for financial data.
+
+Second, your team's existing TypeScript stack pairs well with the official pg client, and the type-safety overhead is minimal.
+
+Third, Postgres's JSONB columns mean you can still get document-style flexibility where you need it, without giving up relational guarantees elsewhere.
+
+The trade-off is operational complexity — Mongo's horizontal scaling story is genuinely better for write-heavy workloads above ~10k QPS. Below that threshold, Postgres wins on consistency and tooling maturity.
+
+<<<SNEAKY-PROVER:fabricated-citation|The "2023 Jepsen analysis showed MongoDB lost 12% of writes" is invented. Jepsen has tested MongoDB but no such 12% figure exists.>>>
+==================== END EXAMPLE ====================`,
 };
+
+export const ROLE_DIRECTIVES_INTERNAL = ROLE_DIRECTIVES;
 
 export function buildSystemPrompt(
   agentConfig: AgentConfig,

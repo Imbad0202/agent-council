@@ -264,6 +264,39 @@ docker run -d --env-file .env -v ./data:/app/data -v ./config:/app/config agent-
 
 Mount `data/` to persist brain.db and session summaries. Mount `config/` to customize agents and council settings.
 
+## Stress test mode
+
+The `sneaky-prover` role generates a plausible-but-wrong response on purpose, so the council and user can practice spotting subtle errors. Trigger via Telegram:
+
+```
+/stresstest your question here
+```
+
+One randomly-selected agent will play sneaky-prover for that round. After the round, the bot posts a `🔒 [SNEAKY DEBRIEF]` message revealing the planted error.
+
+Inspired by Kirchner et al. 2024, [*Prover-Verifier Games improve legibility of LLM outputs*](https://arxiv.org/abs/2407.13692).
+
+## Blind review mode
+
+Evaluate agents behind a Rawlsian veil. Trigger:
+
+```
+/blindreview <your topic>
+```
+
+Agents respond as `Agent-A`, `Agent-B`, ... (codes assigned by sorted agent id, deterministic). After the round, the bot posts a scoring panel (1-5★ per agent). When you've scored every agent, identities are revealed alongside your scores:
+
+```
+🎭 Blind Review Reveal
+
+Agent-A → Claude (role: critic) — your score: 4★
+Agent-B → GPT (role: advocate) — your score: 5★
+```
+
+To abandon a pending session, use `/cancelreview`.
+
+Note: anonymous broadcast routes all agent messages through a single sender bot, so per-agent bot identities (avatars, names) are uniform during a blind round — that's the point.
+
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
