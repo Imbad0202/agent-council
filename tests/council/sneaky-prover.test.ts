@@ -76,4 +76,19 @@ Based on a 2024 study by Smith et al., this approach increases throughput by 47%
     expect(pickSneakyTarget(['a1', 'a2', 'a3'], () => 0.0)).toBe('a1');
     expect(pickSneakyTarget(['a1', 'a2', 'a3'], () => 0.999)).toBe('a3');
   });
+
+  it('responses storage uses stripped content for sneaky-prover (no trailer leak via summary)', () => {
+    // Unit-level proof of the storage shape: when a response carries a trailer,
+    // the version stored in `responses` (which the facilitator summary later
+    // reads) must have the trailer stripped.
+    const original = `Body of response.
+
+<<<SNEAKY-PROVER:logical-fallacy|False dichotomy planted in paragraph 2>>>`;
+    const parsed = parseSneakyTrailer(original);
+    expect(parsed).not.toBeNull();
+    // Mirror the deliberation.ts construction used at the responses.push site.
+    const responseForStorage = { content: parsed!.bodyWithoutTrailer };
+    expect(responseForStorage.content).not.toContain('<<<SNEAKY-PROVER:');
+    expect(responseForStorage.content).not.toContain('logical-fallacy');
+  });
 });

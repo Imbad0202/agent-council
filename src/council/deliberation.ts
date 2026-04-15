@@ -230,7 +230,11 @@ export class DeliberationHandler {
         });
       }
 
-      responses.push({ worker, role, response });
+      const responseForStorage =
+        role === 'sneaky-prover' && storedContent !== response.content
+          ? { ...response, content: storedContent }
+          : response;
+      responses.push({ worker, role, response: responseForStorage });
     }
 
     // Broadcast debrief if stress-test round produced sneaky-prover entries
