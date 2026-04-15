@@ -20,6 +20,7 @@ export interface CouncilMessage {
     references?: string[];
   };
   stressTest?: boolean;
+  blindReview?: boolean;
 }
 
 export interface AgentConfig {
