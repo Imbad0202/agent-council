@@ -6,14 +6,28 @@ export function assignRoles(
   message: string,
   config: CouncilConfig,
   patterns?: PatternRecord[],
+  options?: { allowSneaky?: boolean },
 ): Record<string, AgentRole> {
-  const topic = detectBestTopic(message);
+  const keywordTopic = detectBestTopic(message);
+  const lower = message.toLowerCase();
+  const overrideKeyMatch = Object.keys(config.roles.topicOverrides).find((key) =>
+    lower.includes(key.toLowerCase()),
+  );
+  const topic = (keywordTopic && config.roles.topicOverrides[keywordTopic])
+    ? keywordTopic
+    : (overrideKeyMatch ?? keywordTopic);
   let roleList: AgentRole[];
 
   if (topic && config.roles.topicOverrides[topic]) {
     roleList = [...config.roles.topicOverrides[topic]];
   } else {
     roleList = [...config.roles.default2Agents];
+  }
+
+  if (roleList.includes('sneaky-prover') && options?.allowSneaky !== true) {
+    throw new Error(
+      'sneaky-prover role assigned but allowSneaky=false — this role is opt-in via /stresstest only',
+    );
   }
 
   while (roleList.length < agentIds.length) {
