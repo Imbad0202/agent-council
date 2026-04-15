@@ -17,6 +17,7 @@ import { ExecutionDispatcher } from './execution/dispatcher.js';
 import { ExecutionReviewer } from './execution/reviewer.js';
 import { parseArgs, createAdapter } from './adapters/factory.js';
 import { buildRichMetadata } from './adapters/metadata.js';
+import { TelegramAdapter } from './adapters/telegram.js';
 import type { AdapterFactoryConfig } from './adapters/factory.js';
 import type { LLMProvider } from './types.js';
 
@@ -116,8 +117,30 @@ async function main() {
   }
 
   // Deliberation layer
-  new DeliberationHandler(bus, peerWorkers, councilConfig, sendFn, facilitatorWorker);
+  const deliberationHandler = new DeliberationHandler(
+    bus,
+    peerWorkers,
+    councilConfig,
+    sendFn,
+    facilitatorWorker,
+    adapter instanceof TelegramAdapter
+      ? adapter.sendMessageWithKeyboard.bind(adapter)
+      : undefined,
+  );
   console.log('DeliberationHandler initialized');
+
+  // Wire blind-review commands into the Telegram listener bot (no-op for CLI)
+  if (adapter instanceof TelegramAdapter) {
+    const agentMeta = new Map<string, { name: string; role: string }>();
+    for (const agent of agentConfigs) {
+      agentMeta.set(agent.id, { name: agent.name ?? agent.id, role: 'tbd' });
+    }
+    adapter.setBlindReviewWiring({
+      store: deliberationHandler.getBlindReviewStore(),
+      sendFn: (agentId, content, threadId) => adapter.send(agentId, content, { agentName: '' }, threadId),
+      agentMeta,
+    });
+  }
 
   // Participation manager
   if (councilConfig.participation) {

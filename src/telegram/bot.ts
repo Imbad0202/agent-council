@@ -3,6 +3,12 @@ import { createCouncilMessageFromTelegram } from './handlers.js';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
 
+export interface BlindReviewWiring {
+  store: BlindReviewStore;
+  sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>;
+  agentMeta: Map<string, { name: string; role: string }>;
+}
+
 export function buildStressTestHandler(
   groupChatId: number,
   handler: { handleHumanMessage: (msg: CouncilMessage) => void },
@@ -128,7 +134,10 @@ export class BotManager {
     }
   }
 
-  setupListener(handler: { handleHumanMessage: (msg: CouncilMessage) => void }): void {
+  setupListener(
+    handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+    blindReviewWiring?: BlindReviewWiring,
+  ): void {
     const listenerBot = this.bots.get(this.listenerAgentId);
     if (!listenerBot) {
       throw new Error(`Listener bot not found for agent: ${this.listenerAgentId}`);
@@ -143,6 +152,17 @@ export class BotManager {
       const councilMsg = createCouncilMessageFromTelegram(ctx.message);
       handler.handleHumanMessage(councilMsg);
     });
+
+    if (blindReviewWiring) {
+      listenerBot.command('blindreview', buildBlindReviewHandler(this.groupChatId, handler));
+      listenerBot.command('cancelreview', buildCancelReviewHandler(this.groupChatId, blindReviewWiring.store));
+      listenerBot.callbackQuery(/^br-score:(.+):(\d)$/, buildBlindReviewCallback(
+        this.groupChatId,
+        blindReviewWiring.store,
+        blindReviewWiring.sendFn,
+        blindReviewWiring.agentMeta,
+      ));
+    }
   }
 
   private splitMessage(text: string, maxLength = 4096): string[] {
