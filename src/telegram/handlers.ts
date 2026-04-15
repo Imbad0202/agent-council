@@ -10,7 +10,7 @@ interface TelegramMessage {
 
 export function createCouncilMessageFromTelegram(
   msg: TelegramMessage,
-  options?: { stressTest?: boolean },
+  options?: { stressTest?: boolean; blindReview?: boolean },
 ): CouncilMessage {
   return {
     id: `tg-${msg.message_id}`,
@@ -19,6 +19,7 @@ export function createCouncilMessageFromTelegram(
     timestamp: msg.date * 1000,
     threadId: msg.message_thread_id,
     ...(options?.stressTest ? { stressTest: true } : {}),
+    ...(options?.blindReview ? { blindReview: true } : {}),
   };
 }
 

@@ -1,6 +1,7 @@
 import { Bot, Context, InlineKeyboard } from 'grammy';
 import { createCouncilMessageFromTelegram } from './handlers.js';
 import type { AgentConfig, CouncilMessage } from '../types.js';
+import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
 
 export function buildStressTestHandler(
   groupChatId: number,
@@ -21,6 +22,74 @@ export function buildStressTestHandler(
     if (!ctx.message) return;
     const councilMsg = createCouncilMessageFromTelegram(ctx.message, { stressTest: true });
     handler.handleHumanMessage(councilMsg);
+  };
+}
+
+export function buildBlindReviewHandler(
+  groupChatId: number,
+  handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+
+    const message = ctx.match?.toString().trim() ?? '';
+    if (!message) {
+      await ctx.reply(
+        'Usage: /blindreview <your topic>\nAgents respond anonymously (Agent-A, Agent-B, ...). You score each one before identities are revealed.',
+      );
+      return;
+    }
+
+    if (!ctx.message) return;
+    const councilMsg = createCouncilMessageFromTelegram(ctx.message, { blindReview: true });
+    handler.handleHumanMessage(councilMsg);
+  };
+}
+
+export function buildCancelReviewHandler(groupChatId: number, store: BlindReviewStore) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const session = store.get(threadId);
+    if (!session) {
+      await ctx.reply('No blind-review session in progress for this thread.');
+      return;
+    }
+    store.delete(threadId);
+    await ctx.reply('Blind-review session cancelled.');
+  };
+}
+
+export function buildBlindReviewCallback(
+  groupChatId: number,
+  store: BlindReviewStore,
+  sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>,
+  agentMeta: Map<string, { name: string; role: string }>,
+) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (!ctx.match || !Array.isArray(ctx.match)) return;
+    const code = ctx.match[1];
+    const score = parseInt(ctx.match[2], 10);
+    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+
+    const result = store.recordScore(threadId, code, score);
+    if ('error' in result) {
+      await ctx.answerCallbackQuery({ text: result.error });
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: `Recorded ${score}★ for ${code}` });
+
+    if (result.allScored) {
+      const session = store.get(threadId);
+      if (session) {
+        const reveal = formatRevealMessage(session, agentMeta);
+        await sendFn('blind-review-reveal', reveal, threadId);
+        store.markRevealed(threadId);
+      }
+    }
   };
 }
 
