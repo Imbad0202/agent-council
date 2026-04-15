@@ -57,16 +57,19 @@ Based on a 2024 study by Smith et al., this approach increases throughput by 47%
   });
 
   it('assignRoles throws when sneaky-prover requested without allowSneaky', () => {
+    // 'run qa regression integration tests' scores 4 keywords for the 'testing' topic
+    // (test, qa, regression, integration), so detectBestTopic reliably returns 'testing'.
+    // Using 'testing' as the override key exercises the real topic-detection path.
     const cfg: CouncilConfig = {
       ...baseConfig,
       roles: {
         ...baseConfig.roles,
-        topicOverrides: { 'stress-test': ['sneaky-prover', 'critic'] },
+        topicOverrides: { testing: ['sneaky-prover', 'critic'] },
       },
     } as CouncilConfig;
-    expect(() => assignRoles(['a1', 'a2'], 'stress-test the proposal', cfg)).toThrow(
-      /sneaky-prover.*allowSneaky/i,
-    );
+    expect(() =>
+      assignRoles(['a1', 'a2'], 'run qa regression integration tests', cfg),
+    ).toThrow(/sneaky-prover.*allowSneaky/i);
   });
 
   it('pickSneakyTarget uses injected RNG deterministically', () => {

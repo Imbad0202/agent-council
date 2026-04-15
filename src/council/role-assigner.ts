@@ -8,14 +8,7 @@ export function assignRoles(
   patterns?: PatternRecord[],
   options?: { allowSneaky?: boolean },
 ): Record<string, AgentRole> {
-  const keywordTopic = detectBestTopic(message);
-  const lower = message.toLowerCase();
-  const overrideKeyMatch = Object.keys(config.roles.topicOverrides).find((key) =>
-    lower.includes(key.toLowerCase()),
-  );
-  const topic = (keywordTopic && config.roles.topicOverrides[keywordTopic])
-    ? keywordTopic
-    : (overrideKeyMatch ?? keywordTopic);
+  const topic = detectBestTopic(message);
   let roleList: AgentRole[];
 
   if (topic && config.roles.topicOverrides[topic]) {
