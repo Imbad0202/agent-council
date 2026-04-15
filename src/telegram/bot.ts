@@ -2,11 +2,13 @@ import { Bot, Context, InlineKeyboard } from 'grammy';
 import { createCouncilMessageFromTelegram } from './handlers.js';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
+import type { EventBus } from '../events/bus.js';
 
 export interface BlindReviewWiring {
   store: BlindReviewStore;
   sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>;
   agentMeta: Map<string, { name: string; role: string }>;
+  bus?: EventBus;
 }
 
 export function buildStressTestHandler(
@@ -73,6 +75,7 @@ export function buildBlindReviewCallback(
   store: BlindReviewStore,
   sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>,
   agentMeta: Map<string, { name: string; role: string }>,
+  bus?: EventBus,
 ) {
   return async (ctx: Context) => {
     if (ctx.chat?.id !== groupChatId) return;
@@ -87,6 +90,7 @@ export function buildBlindReviewCallback(
       return;
     }
     await ctx.answerCallbackQuery({ text: `Recorded ${score}★ for ${code}` });
+    bus?.emit('blind-review.scored', { threadId, code, score, allScored: result.allScored });
 
     if (result.allScored) {
       const session = store.get(threadId);
@@ -94,6 +98,7 @@ export function buildBlindReviewCallback(
         const reveal = formatRevealMessage(session, agentMeta);
         await sendFn('blind-review-reveal', reveal, threadId);
         store.markRevealed(threadId);
+        bus?.emit('blind-review.revealed', { threadId });
       }
     }
   };
@@ -161,6 +166,7 @@ export class BotManager {
         blindReviewWiring.store,
         blindReviewWiring.sendFn,
         blindReviewWiring.agentMeta,
+        blindReviewWiring.bus,
       ));
     }
   }

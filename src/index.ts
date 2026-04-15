@@ -139,6 +139,7 @@ async function main() {
       store: deliberationHandler.getBlindReviewStore(),
       sendFn: (agentId, content, threadId) => adapter.send(agentId, content, { agentName: '' }, threadId),
       agentMeta,
+      bus,
     });
   }
 
