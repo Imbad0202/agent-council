@@ -14,8 +14,10 @@ import { AntiSycophancyEngine } from './anti-sycophancy.js';
 import { assignRoles } from './role-assigner.js';
 import { PATTERN_INJECTION_PROMPTS } from './pattern-prompts.js';
 import { parseSneakyTrailer, formatDebrief, pickSneakyTarget, type DebriefRecord } from './sneaky-prover.js';
+import { BlindReviewStore, buildScoringKeyboard } from './blind-review.js';
 
 type SendFn = (agentId: string, content: string, threadId?: number) => Promise<void>;
+type SendKeyboardFn = (agentId: string, content: string, keyboard: import('grammy').InlineKeyboard, threadId?: number) => Promise<void>;
 
 interface SessionState {
   conversationHistory: CouncilMessage[];
@@ -31,14 +33,21 @@ export class DeliberationHandler {
   private facilitatorWorker: AgentWorker | undefined;
   private config: CouncilConfig;
   private sendFn: SendFn;
+  private sendKeyboardFn: SendKeyboardFn | undefined;
+  private blindReviewStore = new BlindReviewStore();
   private sessions: Map<number, SessionState> = new Map();
 
-  constructor(bus: EventBus, workers: AgentWorker[], config: CouncilConfig, sendFn: SendFn, facilitatorWorker?: AgentWorker) {
+  public getBlindReviewStore(): BlindReviewStore {
+    return this.blindReviewStore;
+  }
+
+  constructor(bus: EventBus, workers: AgentWorker[], config: CouncilConfig, sendFn: SendFn, facilitatorWorker?: AgentWorker, sendKeyboardFn?: SendKeyboardFn) {
     this.bus = bus;
     this.workers = workers;
     this.facilitatorWorker = facilitatorWorker;
     this.config = config;
     this.sendFn = sendFn;
+    this.sendKeyboardFn = sendKeyboardFn;
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
@@ -129,6 +138,20 @@ export class DeliberationHandler {
       currentRoles[targetAgentId] = 'sneaky-prover';
     }
 
+    const blindReviewMode = message?.blindReview === true;
+    let blindCodes: Map<string, string> | undefined;
+    if (blindReviewMode && agentIds.length >= 2) {
+      const rolesMap = new Map(Object.entries(currentRoles));
+      const session = this.blindReviewStore.create(threadId, agentIds, rolesMap);
+      if ('error' in session) {
+        // The first available bot is fine — we just need to send the error somewhere
+        const fallbackId = agentIds[0];
+        await this.sendFn(fallbackId, `❌ ${session.error}. Use /cancelreview to end the previous round.`, threadId);
+        return;
+      }
+      blindCodes = session.codeToAgentId;
+    }
+
     // Emit deliberation.started
     this.bus.emit('deliberation.started', {
       threadId,
@@ -215,7 +238,13 @@ export class DeliberationHandler {
         session.turnManager.recordAgentTurn(worker.id);
 
         // Send to Telegram immediately
-        await this.sendFn(worker.id, storedContent, threadId);
+        if (blindCodes) {
+          const code = [...blindCodes.entries()].find(([, agentId]) => agentId === worker.id)?.[0];
+          const labeledContent = code ? `[${code}]:\n${storedContent}` : storedContent;
+          await this.sendFn(agentIds[0], labeledContent, threadId);
+        } else {
+          await this.sendFn(worker.id, storedContent, threadId);
+        }
 
         const classification = session.antiSycophancy.classifyResponse(storedContent);
         session.antiSycophancy.recordClassification(classification);
@@ -241,6 +270,19 @@ export class DeliberationHandler {
     if (debriefs.length > 0) {
       const debriefMessage = debriefs.map(formatDebrief).join('\n');
       await this.sendFn('system-debrief', debriefMessage, threadId);
+    }
+
+    // Blind-review: post scoring keyboard after all responses are in
+    if (blindCodes && blindCodes.size >= 2 && this.sendKeyboardFn) {
+      const codes = [...blindCodes.keys()];
+      const keyboard = buildScoringKeyboard(codes);
+      await this.sendKeyboardFn(
+        agentIds[0],
+        'Score each agent 1-5 based on their contribution above. Identities will be revealed once all are scored.',
+        keyboard,
+        threadId,
+      );
+      this.bus.emit('blind-review.started', { threadId, codes });
     }
 
     // Facilitator summary — ask if user wants another round
