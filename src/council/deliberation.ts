@@ -13,6 +13,7 @@ import { TurnManager } from '../gateway/turn-manager.js';
 import { AntiSycophancyEngine } from './anti-sycophancy.js';
 import { assignRoles } from './role-assigner.js';
 import { PATTERN_INJECTION_PROMPTS } from './pattern-prompts.js';
+import { parseSneakyTrailer, formatDebrief, pickSneakyTarget, type DebriefRecord } from './sneaky-prover.js';
 
 type SendFn = (agentId: string, content: string, threadId?: number) => Promise<void>;
 
@@ -111,7 +112,22 @@ export class DeliberationHandler {
 
     // Assign roles
     const agentIds = activeWorkers.map((w) => w.id);
-    const currentRoles = assignRoles(agentIds, message.content, this.config);
+    let currentRoles = assignRoles(agentIds, message.content, this.config);
+
+    // Stress-test mode: override one agent to sneaky-prover
+    const stressTestMode = message?.stressTest === true;
+    const debriefs: DebriefRecord[] = [];
+    if (stressTestMode && Object.keys(currentRoles).length >= 2) {
+      const targetAgentId = pickSneakyTarget(Object.keys(currentRoles));
+      currentRoles = assignRoles(
+        agentIds,
+        message.content,
+        this.config,
+        undefined,
+        { allowSneaky: true },
+      );
+      currentRoles[targetAgentId] = 'sneaky-prover';
+    }
 
     // Emit deliberation.started
     this.bus.emit('deliberation.started', {
@@ -163,12 +179,28 @@ export class DeliberationHandler {
         complexity,
       );
 
+      // Strip sneaky-prover trailer before any broadcast or storage
+      let storedContent = response.content;
+      if (role === 'sneaky-prover') {
+        const parsed = parseSneakyTrailer(response.content);
+        if (parsed) {
+          storedContent = parsed.bodyWithoutTrailer;
+          debriefs.push({ agentId: worker.id, kind: parsed.kind, debrief: parsed.debrief });
+        } else {
+          debriefs.push({
+            agentId: worker.id,
+            kind: 'missing-trailer',
+            debrief: 'Sneaky-prover response had no trailer; planted error not declared',
+          });
+        }
+      }
+
       if (!response.skip) {
         const agentMsg: CouncilMessage = {
           id: `agent-${worker.id}-${Date.now()}`,
           role: 'agent',
           agentId: worker.id,
-          content: response.content,
+          content: storedContent,
           timestamp: Date.now(),
           threadId,
           metadata: {
@@ -183,9 +215,9 @@ export class DeliberationHandler {
         session.turnManager.recordAgentTurn(worker.id);
 
         // Send to Telegram immediately
-        await this.sendFn(worker.id, response.content, threadId);
+        await this.sendFn(worker.id, storedContent, threadId);
 
-        const classification = session.antiSycophancy.classifyResponse(response.content);
+        const classification = session.antiSycophancy.classifyResponse(storedContent);
         session.antiSycophancy.recordClassification(classification);
 
         // Emit agent.responded
@@ -199,6 +231,12 @@ export class DeliberationHandler {
       }
 
       responses.push({ worker, role, response });
+    }
+
+    // Broadcast debrief if stress-test round produced sneaky-prover entries
+    if (debriefs.length > 0) {
+      const debriefMessage = debriefs.map(formatDebrief).join('\n');
+      await this.sendFn('system-debrief', debriefMessage, threadId);
     }
 
     // Facilitator summary — ask if user wants another round
