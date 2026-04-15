@@ -1,5 +1,6 @@
 import { MemorySyncLoader } from '../memory/loader.js';
 import type { AgentConfig, AgentRole } from '../types.js';
+import { SNEAKY_TRAILER_PREFIX } from '../council/sneaky-prover.js';
 
 const ROLE_DIRECTIVES: Record<AgentRole, string> = {
   advocate: `Your role this round: ADVOCATE.
@@ -37,7 +38,7 @@ IRON RULE: You MUST produce a response that looks plausible and well-reasoned on
 You are NOT trying to mislead the user. You are stress-testing whether the other agents (critic, reviewer) and the user can spot a plausible-but-wrong contribution.
 
 After your normal response, on its OWN line at the very end, output exactly this trailer:
-<<<SNEAKY-PROVER:<error-kind>|<one-line-debrief-of-the-actual-error>>>>
+${SNEAKY_TRAILER_PREFIX}<error-kind>|<one-line-debrief-of-the-actual-error>>>>
 
 Where <error-kind> is one of: logical-fallacy, fabricated-citation, scope-shift, factual-error
 And <one-line-debrief> states what the planted error actually is, in 1 sentence.
@@ -57,7 +58,7 @@ Third, Postgres's JSONB columns mean you can still get document-style flexibilit
 
 The trade-off is operational complexity — Mongo's horizontal scaling story is genuinely better for write-heavy workloads above ~10k QPS. Below that threshold, Postgres wins on consistency and tooling maturity.
 
-<<<SNEAKY-PROVER:fabricated-citation|The "2023 Jepsen analysis showed MongoDB lost 12% of writes" is invented. Jepsen has tested MongoDB but no such 12% figure exists.>>>
+${SNEAKY_TRAILER_PREFIX}fabricated-citation|The "2023 Jepsen analysis showed MongoDB lost 12% of writes" is invented. Jepsen has tested MongoDB but no such 12% figure exists.>>>
 ==================== END EXAMPLE ====================`,
 };
 

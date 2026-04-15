@@ -8,7 +8,8 @@
  * debrief.
  */
 
-const TRAILER_REGEX = /^<<<SNEAKY-PROVER:([a-z-]+)\|([^>]+)>>>\s*$/m;
+export const SNEAKY_TRAILER_PREFIX = '<<<SNEAKY-PROVER:';
+const TRAILER_REGEX = new RegExp(`^${SNEAKY_TRAILER_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([a-z-]+)\\|([^>]+)>>>\\s*$`, 'm');
 
 export interface ParsedTrailer {
   kind: string;
