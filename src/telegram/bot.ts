@@ -1,4 +1,4 @@
-import { Bot, Context } from 'grammy';
+import { Bot, Context, InlineKeyboard } from 'grammy';
 import { createCouncilMessageFromTelegram } from './handlers.js';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 
@@ -113,6 +113,21 @@ export class BotManager {
     for (const chunk of this.splitMessage(content)) {
       await bot.api.sendMessage(this.groupChatId, chunk, opts);
     }
+  }
+
+  async sendMessageWithKeyboard(
+    agentId: string,
+    content: string,
+    keyboard: InlineKeyboard,
+    threadId?: number,
+  ): Promise<void> {
+    const bot = this.bots.get(agentId) ?? this.bots.values().next().value;
+    if (!bot) return;
+    const opts: { reply_markup: InlineKeyboard; message_thread_id?: number } = {
+      reply_markup: keyboard,
+    };
+    if (threadId) opts.message_thread_id = threadId;
+    await bot.api.sendMessage(this.groupChatId, content, opts);
   }
 
   getListenerBot(): Bot {
