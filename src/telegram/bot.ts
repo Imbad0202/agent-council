@@ -11,48 +11,50 @@ export interface BlindReviewWiring {
   bus?: EventBus;
 }
 
-export function buildStressTestHandler(
+type CommandFlag = { stressTest: true } | { blindReview: true };
+
+function buildCommandHandler(
   groupChatId: number,
+  usageText: string,
   handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+  flag: CommandFlag,
 ) {
   return async (ctx: Context) => {
     if (ctx.chat?.id !== groupChatId) return;
     if (ctx.from?.is_bot) return;
-
     const message = ctx.match?.toString().trim() ?? '';
     if (!message) {
-      await ctx.reply(
-        'Usage: /stresstest <your question>\nOne agent will play sneaky-prover (planted plausible error) so you can practice spotting it.',
-      );
+      await ctx.reply(usageText);
       return;
     }
-
     if (!ctx.message) return;
-    const councilMsg = createCouncilMessageFromTelegram(ctx.message, { stressTest: true });
+    const councilMsg = createCouncilMessageFromTelegram(ctx.message, flag);
     handler.handleHumanMessage(councilMsg);
   };
+}
+
+export function buildStressTestHandler(
+  groupChatId: number,
+  handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+) {
+  return buildCommandHandler(
+    groupChatId,
+    'Usage: /stresstest <your question>\nOne agent will play sneaky-prover (planted plausible error) so you can practice spotting it.',
+    handler,
+    { stressTest: true },
+  );
 }
 
 export function buildBlindReviewHandler(
   groupChatId: number,
   handler: { handleHumanMessage: (msg: CouncilMessage) => void },
 ) {
-  return async (ctx: Context) => {
-    if (ctx.chat?.id !== groupChatId) return;
-    if (ctx.from?.is_bot) return;
-
-    const message = ctx.match?.toString().trim() ?? '';
-    if (!message) {
-      await ctx.reply(
-        'Usage: /blindreview <your topic>\nAgents respond anonymously (Agent-A, Agent-B, ...). You score each one before identities are revealed.',
-      );
-      return;
-    }
-
-    if (!ctx.message) return;
-    const councilMsg = createCouncilMessageFromTelegram(ctx.message, { blindReview: true });
-    handler.handleHumanMessage(councilMsg);
-  };
+  return buildCommandHandler(
+    groupChatId,
+    'Usage: /blindreview <your topic>\nAgents respond anonymously (Agent-A, Agent-B, ...). You score each one before identities are revealed.',
+    handler,
+    { blindReview: true },
+  );
 }
 
 export function buildCancelReviewHandler(groupChatId: number, store: BlindReviewStore) {
