@@ -121,10 +121,12 @@ async function main() {
     peerWorkers,
     councilConfig,
     sendFn,
-    facilitatorWorker,
-    adapter.sendMessageWithKeyboard
-      ? adapter.sendMessageWithKeyboard.bind(adapter)
-      : undefined,
+    {
+      facilitatorWorker,
+      sendKeyboardFn: adapter.sendMessageWithKeyboard
+        ? adapter.sendMessageWithKeyboard.bind(adapter)
+        : undefined,
+    },
   );
   console.log('DeliberationHandler initialized');
 

@@ -41,13 +41,22 @@ export class DeliberationHandler {
     return this.blindReviewStore;
   }
 
-  constructor(bus: EventBus, workers: AgentWorker[], config: CouncilConfig, sendFn: SendFn, facilitatorWorker?: AgentWorker, sendKeyboardFn?: SendKeyboardFn) {
+  constructor(
+    bus: EventBus,
+    workers: AgentWorker[],
+    config: CouncilConfig,
+    sendFn: SendFn,
+    options?: {
+      facilitatorWorker?: AgentWorker;
+      sendKeyboardFn?: SendKeyboardFn;
+    },
+  ) {
     this.bus = bus;
     this.workers = workers;
-    this.facilitatorWorker = facilitatorWorker;
+    this.facilitatorWorker = options?.facilitatorWorker;
     this.config = config;
     this.sendFn = sendFn;
-    this.sendKeyboardFn = sendKeyboardFn;
+    this.sendKeyboardFn = options?.sendKeyboardFn;
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
