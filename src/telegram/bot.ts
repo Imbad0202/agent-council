@@ -163,7 +163,7 @@ export class BotManager {
     if (blindReviewWiring) {
       listenerBot.command('blindreview', buildBlindReviewHandler(this.groupChatId, handler));
       listenerBot.command('cancelreview', buildCancelReviewHandler(this.groupChatId, blindReviewWiring.store));
-      listenerBot.callbackQuery(/^br-score:(.+):(\d)$/, buildBlindReviewCallback(
+      listenerBot.callbackQuery(/^br-score:([^:]+):(\d)$/, buildBlindReviewCallback(
         this.groupChatId,
         blindReviewWiring.store,
         blindReviewWiring.sendFn,
