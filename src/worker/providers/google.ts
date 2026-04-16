@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import type { ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
-import { BaseProvider } from './base.js';
+import { BaseProvider, flattenSystemPrompt } from './base.js';
 
 export class GoogleProvider extends BaseProvider {
   readonly name = 'google';
@@ -25,7 +25,7 @@ export class GoogleProvider extends BaseProvider {
       config: {
         maxOutputTokens: options.maxTokens ?? 2048,
         temperature: options.temperature ?? 0.7,
-        systemInstruction: options.systemPrompt,
+        systemInstruction: flattenSystemPrompt(options.systemPrompt),
       },
     });
 

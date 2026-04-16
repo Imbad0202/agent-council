@@ -23,6 +23,7 @@ export function loadAgentConfig(filePath: string): AgentConfig {
     models: parsed.models,
     defaultModelTier: parsed.default_model_tier,
     thinking: parsed.thinking,
+    cacheSystemPrompt: parsed.cache_system_prompt,
   };
 }
 
