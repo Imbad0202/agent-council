@@ -22,6 +22,7 @@ export function loadAgentConfig(filePath: string): AgentConfig {
     roleType: parsed.role_type,
     models: parsed.models,
     defaultModelTier: parsed.default_model_tier,
+    thinking: parsed.thinking,
   };
 }
 

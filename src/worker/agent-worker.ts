@@ -7,6 +7,7 @@ import type {
   LLMProvider,
   ProviderMessage,
   ProviderResponse,
+  ThinkingConfig,
 } from '../types.js';
 import { buildSystemPrompt } from './personality.js';
 
@@ -42,6 +43,13 @@ export class AgentWorker {
     return this.config.model;
   }
 
+  private resolveThinking(complexity?: Complexity): ThinkingConfig | undefined {
+    if (!complexity || !this.config.thinking) return undefined;
+    const tier = this.config.thinking[complexity];
+    if (!tier) return undefined;
+    return { type: 'enabled', budget_tokens: tier.budget_tokens };
+  }
+
   async respond(
     conversationHistory: CouncilMessage[],
     role: AgentRole,
@@ -65,10 +73,12 @@ export class AgentWorker {
     }
 
     const model = this.resolveModel(complexity);
+    const thinking = this.resolveThinking(complexity);
 
     const response = await this.provider.chat(messages, {
       model,
       systemPrompt,
+      ...(thinking && { thinking }),
     });
 
     this.stats.responseCount++;
