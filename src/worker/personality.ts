@@ -64,29 +64,7 @@ ${SNEAKY_TRAILER_PREFIX}fabricated-citation|The "2023 Jepsen analysis showed Mon
 
 export const ROLE_DIRECTIVES_INTERNAL = ROLE_DIRECTIVES;
 
-export function buildSystemPrompt(
-  agentConfig: AgentConfig,
-  memorySyncPath: string,
-  role: AgentRole,
-): string {
-  const loader = new MemorySyncLoader(memorySyncPath);
-  const memoryIndex = loader.loadIndex(agentConfig.memoryDir);
-
-  const sections: string[] = [];
-
-  // 1. Base personality
-  sections.push(`# Identity\n\n${agentConfig.personality}`);
-
-  // 2. Memory context
-  if (memoryIndex.trim()) {
-    sections.push(`# Your Memory Index\n\nYou have the following memories about the user and projects:\n\n${memoryIndex}`);
-  }
-
-  // 3. Role directive (re-injected every turn as iron rule anchor)
-  sections.push(`# Current Role Assignment: ${role}\n\n${ROLE_DIRECTIVES[role]}`);
-
-  // 4. Council rules
-  sections.push(`# Council Rules
+const COUNCIL_RULES = `# Council Rules
 
 - You are in a group discussion with the user and another AI agent.
 - The user is the final decision maker. You advise and debate, you don't decide.
@@ -94,7 +72,39 @@ export function buildSystemPrompt(
 - Keep responses focused and under 500 words unless depth is needed.
 - If you have nothing new to add, say so briefly rather than repeating previous points.
 - When citing a memory or prior discussion, mark it with [ref:filename.md] (e.g., [ref:principle-architecture.md]).
-- IMPORTANT: This is a Telegram chat. Do NOT use Markdown formatting (no #, ##, **, *, \`\`\`, etc.). Use plain text only. Use line breaks and numbered lists (1. 2. 3.) or dashes (- ) for structure. Keep it conversational and easy to read on mobile.`);
+- IMPORTANT: This is a Telegram chat. Do NOT use Markdown formatting (no #, ##, **, *, \`\`\`, etc.). Use plain text only. Use line breaks and numbered lists (1. 2. 3.) or dashes (- ) for structure. Keep it conversational and easy to read on mobile.`;
 
-  return sections.join('\n\n---\n\n');
+export interface SystemPromptParts {
+  stable: string;
+  volatile: string;
+}
+
+export function buildSystemPromptParts(
+  agentConfig: AgentConfig,
+  memorySyncPath: string,
+  role: AgentRole,
+): SystemPromptParts {
+  const loader = new MemorySyncLoader(memorySyncPath);
+  const memoryIndex = loader.loadIndex(agentConfig.memoryDir);
+
+  const stableSections: string[] = [];
+  stableSections.push(`# Identity\n\n${agentConfig.personality}`);
+  if (memoryIndex.trim()) {
+    stableSections.push(`# Your Memory Index\n\nYou have the following memories about the user and projects:\n\n${memoryIndex}`);
+  }
+  stableSections.push(COUNCIL_RULES);
+
+  const stable = stableSections.join('\n\n---\n\n');
+  const volatile = `# Role Assignment: ${role}\n\n${ROLE_DIRECTIVES[role]}`;
+
+  return { stable, volatile };
+}
+
+export function buildSystemPrompt(
+  agentConfig: AgentConfig,
+  memorySyncPath: string,
+  role: AgentRole,
+): string {
+  const { stable, volatile } = buildSystemPromptParts(agentConfig, memorySyncPath, role);
+  return `${stable}\n\n---\n\n${volatile}`;
 }

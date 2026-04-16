@@ -7,9 +7,10 @@ import type {
   LLMProvider,
   ProviderMessage,
   ProviderResponse,
+  SystemPromptPart,
   ThinkingConfig,
 } from '../types.js';
-import { buildSystemPrompt } from './personality.js';
+import { buildSystemPromptParts } from './personality.js';
 
 export class AgentWorker {
   readonly id: string;
@@ -56,7 +57,11 @@ export class AgentWorker {
     challengePrompt?: string,
     complexity?: Complexity,
   ): Promise<ProviderResponse> {
-    const systemPrompt = buildSystemPrompt(this.config, this.memorySyncPath, role);
+    const { stable, volatile } = buildSystemPromptParts(this.config, this.memorySyncPath, role);
+    const systemPrompt = `${stable}\n\n---\n\n${volatile}`;
+    const systemPromptParts: SystemPromptPart[] | undefined = this.config.cacheSystemPrompt
+      ? [{ text: `${stable}\n\n---\n\n`, cache: true }, { text: volatile }]
+      : undefined;
 
     const messages: ProviderMessage[] = conversationHistory.map((msg) => {
       if (msg.role === 'human') {
@@ -78,6 +83,7 @@ export class AgentWorker {
     const response = await this.provider.chat(messages, {
       model,
       systemPrompt,
+      ...(systemPromptParts && { systemPromptParts }),
       ...(thinking && { thinking }),
     });
 
