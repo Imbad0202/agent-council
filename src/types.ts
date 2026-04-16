@@ -35,6 +35,7 @@ export interface AgentConfig {
   roleType?: 'peer' | 'facilitator';
   models?: { low: string; medium: string; high: string };
   defaultModelTier?: Complexity;
+  thinking?: Partial<Record<Complexity, { budget_tokens: number }>>;
 }
 
 export interface CouncilConfig {
