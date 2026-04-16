@@ -95,7 +95,7 @@ async function main() {
   const mainProvider = getOrCreateProvider(agentConfigs[0].provider);
 
   // Classification layer
-  new IntentGate(bus, mainProvider);
+  new IntentGate(bus, mainProvider, councilConfig.systemModels?.intentClassification);
   console.log('IntentGate initialized');
 
   // Memory layer
@@ -159,7 +159,7 @@ async function main() {
 
   // Execution layer (if enabled)
   if (councilConfig.execution?.enabled) {
-    new ExecutionDispatcher(bus, councilConfig.execution, mainProvider);
+    new ExecutionDispatcher(bus, councilConfig.execution, mainProvider, councilConfig.systemModels?.taskDecomposition);
     new ExecutionReviewer(bus, sendFn);
     console.log('Execution modules initialized (Dispatcher + Reviewer)');
   }

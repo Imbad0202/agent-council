@@ -58,6 +58,12 @@ export interface CouncilConfig {
   antiPattern?: AntiPatternConfig;
   participation?: ParticipationConfig;
   execution?: ExecutionConfig;
+  systemModels?: SystemModelsConfig;
+}
+
+export interface SystemModelsConfig {
+  intentClassification?: string;
+  taskDecomposition?: string;
 }
 
 export interface ProviderMessage {

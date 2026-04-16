@@ -73,5 +73,9 @@ export function loadCouncilConfig(filePath: string): CouncilConfig {
       autoDispatch: parsed.execution.auto_dispatch ?? true,
       repoPath: parsed.execution.repo_path ?? '.',
     } : undefined,
+    systemModels: parsed.system_models ? {
+      intentClassification: parsed.system_models.intent_classification,
+      taskDecomposition: parsed.system_models.task_decomposition,
+    } : undefined,
   };
 }
