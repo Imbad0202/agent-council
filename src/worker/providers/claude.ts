@@ -23,16 +23,19 @@ export class ClaudeProvider extends BaseProvider {
     const response = await this.client.messages.create({
       model: options.model,
       max_tokens: options.maxTokens ?? 8192,
-      temperature: options.temperature ?? 0.7,
+      temperature: options.thinking ? 1 : (options.temperature ?? 0.7),
       system: options.systemPrompt,
       messages: anthropicMessages,
+      ...(options.thinking && { thinking: options.thinking }),
     });
 
     const textBlock = response.content.find((block) => block.type === 'text');
+    const thinkingBlock = response.content.find((block) => block.type === 'thinking');
     const content = textBlock ? textBlock.text : '';
 
     return {
       content,
+      ...(thinkingBlock && { thinking: thinkingBlock.thinking }),
       tokensUsed: {
         input: response.usage.input_tokens,
         output: response.usage.output_tokens,
