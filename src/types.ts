@@ -65,15 +65,22 @@ export interface ProviderMessage {
   content: string;
 }
 
+export interface ThinkingConfig {
+  type: 'enabled';
+  budget_tokens: number;
+}
+
 export interface ChatOptions {
   model: string;
   maxTokens?: number;
   temperature?: number;
   systemPrompt: string;
+  thinking?: ThinkingConfig;
 }
 
 export interface ProviderResponse {
   content: string;
+  thinking?: string;
   skip?: boolean;
   skipReason?: string;
   confidence?: number;
