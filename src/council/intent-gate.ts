@@ -12,13 +12,17 @@ interface ClassificationResult {
   confidence: number;
 }
 
+const DEFAULT_CLASSIFICATION_MODEL = 'claude-haiku-4-5-20251001';
+
 export class IntentGate {
   private bus: EventBus;
   private provider: LLMProvider;
+  private classificationModel: string;
 
-  constructor(bus: EventBus, provider: LLMProvider) {
+  constructor(bus: EventBus, provider: LLMProvider, classificationModel: string = DEFAULT_CLASSIFICATION_MODEL) {
     this.bus = bus;
     this.provider = provider;
+    this.classificationModel = classificationModel;
     this.bus.on('message.received', (payload) => {
       this.classify(payload.message, payload.threadId);
     });
@@ -64,7 +68,7 @@ export class IntentGate {
       const response = await this.provider.chat(
         [{ role: 'user', content: `Classify this message:\n\n${content}` }],
         {
-          model: 'claude-haiku-4-5-20251001',
+          model: this.classificationModel,
           systemPrompt: 'Classify the user message into:\nintent: "deliberation" | "quick-answer" | "implementation" | "investigation" | "meta"\ncomplexity: "low" | "medium" | "high"\n\nRespond in JSON: {"intent": "...", "complexity": "..."}',
           maxTokens: 64, temperature: 0.1,
         },

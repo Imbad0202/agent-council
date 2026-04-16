@@ -51,3 +51,7 @@ execution:
   executor_timeout_ms: 300000
   auto_dispatch: true
   repo_path: .
+
+system_models:
+  intent_classification: claude-haiku-4-5-20251001
+  task_decomposition: claude-haiku-4-5-20251001
