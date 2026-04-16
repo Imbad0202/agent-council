@@ -1,4 +1,9 @@
-import type { LLMProvider, ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
+import type { LLMProvider, ProviderMessage, ChatOptions, ProviderResponse, SystemPromptPart } from '../../types.js';
+
+export function flattenSystemPrompt(systemPrompt: string | SystemPromptPart[]): string {
+  if (typeof systemPrompt === 'string') return systemPrompt;
+  return systemPrompt.map((p) => p.text).join('');
+}
 
 export abstract class BaseProvider implements LLMProvider {
   abstract readonly name: string;

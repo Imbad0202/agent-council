@@ -36,6 +36,7 @@ export interface AgentConfig {
   models?: { low: string; medium: string; high: string };
   defaultModelTier?: Complexity;
   thinking?: Partial<Record<Complexity, { budget_tokens: number }>>;
+  cacheSystemPrompt?: boolean;
 }
 
 export interface CouncilConfig {
@@ -77,11 +78,16 @@ export interface ThinkingConfig {
   budget_tokens: number;
 }
 
+export interface SystemPromptPart {
+  text: string;
+  cache?: boolean;
+}
+
 export interface ChatOptions {
   model: string;
   maxTokens?: number;
   temperature?: number;
-  systemPrompt: string;
+  systemPrompt: string | SystemPromptPart[];
   thinking?: ThinkingConfig;
 }
 

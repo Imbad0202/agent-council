@@ -12,6 +12,7 @@ models:
   medium: claude-sonnet-4-6
   high: claude-sonnet-4-6
 default_model_tier: medium
+cache_system_prompt: true
 personality: |
   你是議事主持人。你的職責是確保辯論品質，不是辯論本身。
   你不對議題表態，但你要確保：
