@@ -4,7 +4,12 @@ import type { AgentConfig, CouncilMessage } from '../types.js';
 import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
 import type { BlindReviewDB } from '../council/blind-review-db.js';
 import type { EventBus } from '../events/bus.js';
-import type { AdversarialMode } from '../council/adversarial-provers.js';
+import type { AdversarialMode, AdversarialRole } from '../council/adversarial-provers.js';
+import { formatGuessReveal, ROTATION_CALLBACK_PATTERN } from '../council/pvg-rotate.js';
+import { formatAdversarialDebrief } from '../council/adversarial-provers.js';
+import type { PvgRotateStore } from '../council/pvg-rotate-store.js';
+import type { PvgRotateDB } from '../council/pvg-rotate-db.js';
+import { randomUUID } from 'node:crypto';
 
 export interface BlindReviewWiring {
   store: BlindReviewStore;
@@ -13,6 +18,13 @@ export interface BlindReviewWiring {
   bus?: EventBus;
   db?: BlindReviewDB;
   modelConfigForAgent?: (agentId: string) => { low: string; medium: string; high: string } | null;
+}
+
+export interface PvgRotateWiring {
+  store: PvgRotateStore;
+  db?: PvgRotateDB;
+  sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>;
+  bus?: EventBus;
 }
 
 type CommandFlag =
@@ -147,6 +159,75 @@ export function buildBlindReviewCallback(
   };
 }
 
+export function buildPvgRotateCallback(
+  groupChatId: number,
+  store: PvgRotateStore,
+  db: PvgRotateDB | undefined,
+  sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>,
+  bus?: EventBus,
+) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (!ctx.match || !Array.isArray(ctx.match)) return;
+    const guessedRole = ctx.match[1] as AdversarialRole;
+    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+
+    const session = store.get(threadId);
+    if (!session) {
+      await ctx.answerCallbackQuery({ text: 'no pvg-rotate session for this thread' });
+      return;
+    }
+    const result = store.recordGuess(threadId, guessedRole);
+    if ('error' in result) {
+      await ctx.answerCallbackQuery({ text: result.error });
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: result.correct ? '✅' : '❌' });
+
+    let stats = {
+      total: 0,
+      correct: 0,
+      perVector: {
+        'sneaky-prover': { hit: 0, miss: 0 },
+        'biased-prover': { hit: 0, miss: 0 },
+        'deceptive-prover': { hit: 0, miss: 0 },
+        'calibrated-prover': { hit: 0, miss: 0 },
+      },
+    };
+    if (db) {
+      try {
+        db.recordGuess({
+          roundId: randomUUID(),
+          threadId,
+          plantedRole: result.plantedRole,
+          guessedRole,
+          startedAt: new Date(session.startedAt).toISOString(),
+          guessedAt: new Date().toISOString(),
+        });
+        stats = db.getStats(threadId);
+      } catch (err) {
+        bus?.emit('pvg-rotate.persist-failed', {
+          threadId,
+          error: err instanceof Error ? err : new Error(String(err)),
+        });
+      }
+    }
+
+    const debriefLine = session.plantedDebrief
+      ? formatAdversarialDebrief(session.plantedDebrief)
+      : '(debrief unavailable)';
+    const reveal = formatGuessReveal({
+      plantedRole: result.plantedRole,
+      guessedRole,
+      debriefLine,
+      stats,
+    });
+    await sendFn('pvg-rotate-reveal', reveal, threadId);
+    store.delete(threadId);
+    bus?.emit('pvg-rotate.revealed', { threadId, correct: result.correct });
+  };
+}
+
 interface MultiBotConfig {
   groupChatId: number;
   agents: AgentConfig[];
@@ -185,6 +266,7 @@ export class BotManager {
   setupListener(
     handler: { handleHumanMessage: (msg: CouncilMessage) => void },
     blindReviewWiring?: BlindReviewWiring,
+    pvgRotateWiring?: PvgRotateWiring,
   ): void {
     const listenerBot = this.bots.get(this.listenerAgentId);
     if (!listenerBot) {
@@ -217,6 +299,19 @@ export class BotManager {
         blindReviewWiring.db,
         blindReviewWiring.modelConfigForAgent,
       ));
+    }
+
+    if (pvgRotateWiring) {
+      listenerBot.callbackQuery(
+        ROTATION_CALLBACK_PATTERN,
+        buildPvgRotateCallback(
+          this.groupChatId,
+          pvgRotateWiring.store,
+          pvgRotateWiring.db,
+          pvgRotateWiring.sendFn,
+          pvgRotateWiring.bus,
+        ),
+      );
     }
   }
 
