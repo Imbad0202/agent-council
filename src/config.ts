@@ -13,10 +13,15 @@ export function loadAgentConfig(filePath: string): AgentConfig {
 
   if (parsed.thinking) {
     for (const [tier, cfg] of Object.entries(parsed.thinking)) {
-      const budget = (cfg as { budget_tokens?: unknown })?.budget_tokens;
-      if (typeof budget !== 'number' || !Number.isFinite(budget)) {
-        throw new Error(`Invalid agent config at ${filePath}: thinking.${tier}.budget_tokens must be a number, got ${JSON.stringify(budget)}`);
+      const entry = cfg as { mode?: unknown; budget_tokens?: unknown };
+      if (entry?.mode === 'adaptive') continue;
+      if (entry?.mode === 'enabled') {
+        if (typeof entry.budget_tokens !== 'number' || !Number.isFinite(entry.budget_tokens)) {
+          throw new Error(`Invalid agent config at ${filePath}: thinking.${tier}.budget_tokens must be a finite number when mode=enabled, got ${JSON.stringify(entry.budget_tokens)}`);
+        }
+        continue;
       }
+      throw new Error(`Invalid agent config at ${filePath}: thinking.${tier}.mode must be 'adaptive' or 'enabled', got ${JSON.stringify(entry?.mode)}`);
     }
   }
 
@@ -68,7 +73,7 @@ export function loadCouncilConfig(filePath: string): CouncilConfig {
     },
     antiPattern: {
       enabled: parsed.anti_pattern?.enabled ?? true,
-      detectionModel: parsed.anti_pattern?.detection_model ?? 'claude-haiku-4-5-20251001',
+      detectionModel: parsed.anti_pattern?.detection_model ?? DEFAULT_SYSTEM_MODEL,
       startAfterTurn: parsed.anti_pattern?.start_after_turn ?? 3,
       detectEveryNTurns: parsed.anti_pattern?.detect_every_n_turns ?? 2,
     },

@@ -32,7 +32,7 @@ describe('session-summary', () => {
   ];
 
   it('generates a summary from conversation', async () => {
-    const summary = await generateSessionSummary(messages, ['huahua', 'binbin'], mockProvider, 'claude-opus-4-6');
+    const summary = await generateSessionSummary(messages, ['huahua', 'binbin'], mockProvider, 'claude-opus-4-7');
     expect(summary).toContain('monorepo');
   });
 

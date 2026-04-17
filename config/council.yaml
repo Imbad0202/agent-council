@@ -35,7 +35,7 @@ memory:
 
 anti_pattern:
   enabled: true
-  detection_model: claude-haiku-4-5-20251001
+  detection_model: claude-sonnet-4-6
   start_after_turn: 3
   detect_every_n_turns: 2
 
@@ -53,5 +53,5 @@ execution:
   repo_path: .
 
 system_models:
-  intent_classification: claude-haiku-4-5-20251001
-  task_decomposition: claude-haiku-4-5-20251001
+  intent_classification: claude-sonnet-4-6
+  task_decomposition: claude-sonnet-4-6

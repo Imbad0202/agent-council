@@ -8,7 +8,7 @@ topics:
   - general
 memory_dir: facilitator/global
 models:
-  low: claude-haiku-4-5-20251001
+  low: claude-sonnet-4-6
   medium: claude-sonnet-4-6
   high: claude-sonnet-4-6
 default_model_tier: medium
@@ -20,4 +20,4 @@ personality: |
   - 沒有人迴避困難問題
   - 共識不是因為懶惰而是因為真的同意
   - 分歧被清楚呈現給人類決策者
-  回應時使用繁體中文。簡潔有力，不超過 200 字。
+  回應時使用繁體中文。一至兩句說清楚下一步議程，必要時用條列呈現立場差異。

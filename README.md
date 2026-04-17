@@ -68,7 +68,7 @@ Each agent is a YAML file in `config/agents/`. Create one file per agent.
 id: myagent                              # Unique identifier
 name: MyAgent                            # Display name
 provider: claude                         # LLM provider: claude | openai | google | custom
-model: claude-opus-4-6                   # Model name for the provider
+model: claude-opus-4-7                   # Model name for the provider
 bot_token_env: TELEGRAM_BOT_TOKEN_MYAGENT  # Env var name holding this agent's bot token
 topics: [code, risk, testing, general]   # Topics this agent is interested in
 memory_dir: MyAgent/global               # Directory for external memory (optional)
@@ -125,7 +125,7 @@ memory:
 # Anti-pattern detection (LLM-powered)
 anti_pattern:
   enabled: true
-  detection_model: claude-haiku-4-5-20251001  # Lightweight model for detection
+  detection_model: claude-sonnet-4-6  # Lightweight model for detection
   start_after_turn: 3               # Start detecting after turn 3
   detect_every_n_turns: 2           # Run detection every 2 turns
 
@@ -144,7 +144,7 @@ Each agent can use a different LLM provider. Mix and match models by setting the
 ```yaml
 # config/agents/claude-agent.yaml
 provider: claude
-model: claude-opus-4-6
+model: claude-opus-4-7
 
 # config/agents/gpt-agent.yaml
 provider: openai

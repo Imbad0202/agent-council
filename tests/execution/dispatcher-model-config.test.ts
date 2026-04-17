@@ -38,7 +38,7 @@ describe('ExecutionDispatcher — decompositionModel config', () => {
     expect(options.model).toBe('claude-opus-4-7');
   });
 
-  it('defaults to claude-haiku-4-5-20251001 when no model is passed', async () => {
+  it('defaults to claude-sonnet-4-6 when no model is passed', async () => {
     const provider = createMockProvider('{"tasks": [{"id":"t1","description":"do x","assignedAgent":"a1"}]}');
     const chatSpy = vi.spyOn(provider, 'chat');
     const bus = new EventBus();
@@ -50,6 +50,6 @@ describe('ExecutionDispatcher — decompositionModel config', () => {
     await vi.waitFor(() => expect(dispatchedHandler).toHaveBeenCalled());
 
     const options = chatSpy.mock.calls[0][1];
-    expect(options.model).toBe('claude-haiku-4-5-20251001');
+    expect(options.model).toBe('claude-sonnet-4-6');
   });
 });

@@ -48,6 +48,7 @@ export class AgentWorker {
     if (!complexity || !this.config.thinking) return undefined;
     const tier = this.config.thinking[complexity];
     if (!tier) return undefined;
+    if (tier.mode === 'adaptive') return { type: 'adaptive' };
     return { type: 'enabled', budget_tokens: tier.budget_tokens };
   }
 

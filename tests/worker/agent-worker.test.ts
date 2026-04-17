@@ -27,7 +27,7 @@ const agentConfig: AgentConfig = {
   id: 'huahua',
   name: '花花',
   provider: 'claude',
-  model: 'claude-opus-4-6',
+  model: 'claude-opus-4-7',
   memoryDir: '花花/global',
   personality: 'You are 花花.',
 };
@@ -130,8 +130,8 @@ describe('AgentWorker', () => {
     it('uses complexity tier to select model when config has models map', async () => {
       const tieredConfig: AgentConfig = {
         ...agentConfig,
-        model: 'claude-haiku-3-5',
-        models: { low: 'claude-haiku-3-5', medium: 'claude-sonnet-4-5', high: 'claude-opus-4-6' },
+        model: 'claude-sonnet-4-6',
+        models: { low: 'claude-sonnet-4-6', medium: 'claude-sonnet-4-6', high: 'claude-opus-4-7' },
       };
       const tieredWorker = new AgentWorker(tieredConfig, mockProvider, '/tmp/no-memory');
       const messages: CouncilMessage[] = [
@@ -141,7 +141,7 @@ describe('AgentWorker', () => {
       await tieredWorker.respond(messages, 'analyst', undefined, 'high');
 
       const chatCall = vi.mocked(mockProvider.chat).mock.calls[0];
-      expect(chatCall[1].model).toBe('claude-opus-4-6');
+      expect(chatCall[1].model).toBe('claude-opus-4-7');
     });
 
     it('falls back to config.model when no models map is defined', async () => {
@@ -152,14 +152,14 @@ describe('AgentWorker', () => {
       await worker.respond(messages, 'analyst', undefined, 'high');
 
       const chatCall = vi.mocked(mockProvider.chat).mock.calls[0];
-      expect(chatCall[1].model).toBe('claude-opus-4-6');
+      expect(chatCall[1].model).toBe('claude-opus-4-7');
     });
 
     it('tracks model usage in stats after respond()', async () => {
       const tieredConfig: AgentConfig = {
         ...agentConfig,
-        model: 'claude-haiku-3-5',
-        models: { low: 'claude-haiku-3-5', medium: 'claude-sonnet-4-5', high: 'claude-opus-4-6' },
+        model: 'claude-sonnet-4-6',
+        models: { low: 'claude-sonnet-4-6', medium: 'claude-sonnet-4-6', high: 'claude-opus-4-7' },
       };
       const tieredWorker = new AgentWorker(tieredConfig, mockProvider, '/tmp/no-memory');
       const messages: CouncilMessage[] = [
@@ -171,12 +171,12 @@ describe('AgentWorker', () => {
       await tieredWorker.respond(messages, 'analyst', undefined, 'low');
 
       const stats = tieredWorker.getStats();
-      expect(stats.modelUsage['claude-opus-4-6']).toBeDefined();
-      expect(stats.modelUsage['claude-opus-4-6'].calls).toBe(2);
-      expect(stats.modelUsage['claude-opus-4-6'].inputTokens).toBe(400);
-      expect(stats.modelUsage['claude-opus-4-6'].outputTokens).toBe(160);
-      expect(stats.modelUsage['claude-haiku-3-5']).toBeDefined();
-      expect(stats.modelUsage['claude-haiku-3-5'].calls).toBe(1);
+      expect(stats.modelUsage['claude-opus-4-7']).toBeDefined();
+      expect(stats.modelUsage['claude-opus-4-7'].calls).toBe(2);
+      expect(stats.modelUsage['claude-opus-4-7'].inputTokens).toBe(400);
+      expect(stats.modelUsage['claude-opus-4-7'].outputTokens).toBe(160);
+      expect(stats.modelUsage['claude-sonnet-4-6']).toBeDefined();
+      expect(stats.modelUsage['claude-sonnet-4-6'].calls).toBe(1);
     });
   });
 });

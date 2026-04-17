@@ -104,7 +104,7 @@ Starts when no positional argument is provided and stdin is a TTY.
 ```
 ═══════════════════════════════════════════
   Agent Council CLI v0.2.1
-  Agents: 花花 (claude-opus-4-6), 賓賓 (claude-opus-4-6)
+  Agents: 花花 (claude-opus-4-7), 賓賓 (claude-opus-4-7)
   Facilitator: 主持人 (claude-sonnet-4-6)
   Type /help for commands, /quit to exit
 ═══════════════════════════════════════════
