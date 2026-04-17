@@ -1,5 +1,6 @@
 import type { EventBus } from '../events/bus.js';
 import type { CouncilMessage, IntentType, Complexity, LLMProvider } from '../types.js';
+import { DEFAULT_SYSTEM_MODEL } from '../constants.js';
 import { detectTopics } from './topics.js';
 
 const META_KEYWORDS = ['結束', 'done', '結論', 'wrap up', '總結', '換個角度', '重新開始'];
@@ -12,14 +13,12 @@ interface ClassificationResult {
   confidence: number;
 }
 
-const DEFAULT_CLASSIFICATION_MODEL = 'claude-haiku-4-5-20251001';
-
 export class IntentGate {
   private bus: EventBus;
   private provider: LLMProvider;
   private classificationModel: string;
 
-  constructor(bus: EventBus, provider: LLMProvider, classificationModel: string = DEFAULT_CLASSIFICATION_MODEL) {
+  constructor(bus: EventBus, provider: LLMProvider, classificationModel: string = DEFAULT_SYSTEM_MODEL) {
     this.bus = bus;
     this.provider = provider;
     this.classificationModel = classificationModel;

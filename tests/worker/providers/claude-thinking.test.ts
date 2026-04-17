@@ -39,12 +39,11 @@ describe('ClaudeProvider — extended thinking', () => {
     expect(callArgs.thinking).toEqual({ type: 'enabled', budget_tokens: 32000 });
   });
 
-  it('forces temperature=1 when thinking is enabled (SDK requires it)', async () => {
+  it('defaults temperature to 1 when thinking is enabled and temperature is omitted', async () => {
     const messages: ProviderMessage[] = [{ role: 'user', content: 'Hard question.' }];
     await provider.chat(messages, {
       model: 'claude-opus-4-7',
       systemPrompt: 'You are thoughtful.',
-      temperature: 0.7,
       thinking: { type: 'enabled', budget_tokens: 32000 },
     });
 

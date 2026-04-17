@@ -1,7 +1,6 @@
 import type { EventBus } from '../events/bus.js';
 import type { ExecutionConfig, ExecutionTask, LLMProvider } from '../types.js';
-
-const DEFAULT_DECOMPOSITION_MODEL = 'claude-haiku-4-5-20251001';
+import { DEFAULT_SYSTEM_MODEL } from '../constants.js';
 
 export class ExecutionDispatcher {
   private bus: EventBus;
@@ -13,7 +12,7 @@ export class ExecutionDispatcher {
     bus: EventBus,
     config: ExecutionConfig,
     provider: LLMProvider,
-    decompositionModel: string = DEFAULT_DECOMPOSITION_MODEL,
+    decompositionModel: string = DEFAULT_SYSTEM_MODEL,
   ) {
     this.bus = bus;
     this.config = config;
