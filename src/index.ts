@@ -11,6 +11,7 @@ import { EventBus } from './events/bus.js';
 import { GatewayRouter } from './gateway/router.js';
 import { IntentGate } from './council/intent-gate.js';
 import { DeliberationHandler } from './council/deliberation.js';
+import { BlindReviewDB } from './council/blind-review-db.js';
 import { FacilitatorAgent } from './council/facilitator.js';
 import { ActiveRecall } from './memory/active-recall.js';
 import { ExecutionDispatcher } from './execution/dispatcher.js';
@@ -129,6 +130,15 @@ async function main() {
     },
   );
   console.log('DeliberationHandler initialized');
+
+  // Wire BlindReviewDB + persist-failed event
+  const blindReviewDB = new BlindReviewDB(resolve('data/council.db'));
+  const blindReviewStore = deliberationHandler.getBlindReviewStore();
+  blindReviewStore.attachDB(blindReviewDB);
+  blindReviewStore.onPersistFailed((evt) => {
+    bus.emit('blind-review.persist-failed', evt);
+    console.error('[blind-review] persist failed:', evt);
+  });
 
   // Wire blind-review commands into the listener bot (no-op for adapters without setBlindReviewWiring)
   if (adapter.setBlindReviewWiring) {
