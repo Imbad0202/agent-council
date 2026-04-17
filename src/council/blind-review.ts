@@ -10,6 +10,7 @@
 import { InlineKeyboard } from 'grammy';
 import type { AgentTier } from '../types.js';
 import type { BlindReviewDB } from './blind-review-db.js';
+import { buildRecommendation, renderSparkline } from './blind-review-db.js';
 
 type PersistFailedHandler = (evt: { threadId: number; sessionId: string; error: Error }) => void;
 
@@ -173,6 +174,11 @@ export class BlindReviewStore {
   }
 }
 
+export interface FormatRevealOptions {
+  db?: BlindReviewDB;
+  modelConfigForAgent?: (agentId: string) => { low: string; medium: string; high: string } | null;
+}
+
 export function buildScoringKeyboard(codes: string[]): InlineKeyboard {
   const kb = new InlineKeyboard();
   codes.forEach((code, i) => {
@@ -187,6 +193,7 @@ export function buildScoringKeyboard(codes: string[]): InlineKeyboard {
 export function formatRevealMessage(
   session: BlindReviewSession,
   agentMeta: Map<string, { name: string; role: string }>,
+  opts: FormatRevealOptions = {},
 ): string {
   const lines: string[] = ['🎭 Blind Review Reveal', ''];
   for (const [code, agentId] of session.codeToAgentId.entries()) {
@@ -194,9 +201,41 @@ export function formatRevealMessage(
     const role = session.agentIdToRole.get(agentId) ?? agentMeta.get(agentId)?.role ?? 'unknown';
     const score = session.scores.get(code);
     const scoreStr = score !== undefined ? `your score: ${score}★` : 'not scored';
-    lines.push(`${code} → ${name} (role: ${role}) — ${scoreStr}`);
+
+    const latest = session.turnLog.slice().reverse().find((t) => t.agentId === agentId);
+    const tier = latest?.tier ?? 'unknown';
+    const model = latest?.model ?? 'unknown';
+
+    lines.push(`${code} → ${name} (${model}, ${role}) — ${scoreStr}`);
+
+    if (opts.db && tier !== 'unknown') {
+      const stats = opts.db.getStats(agentId, tier);
+      const sparkline = stats.sampleCount > 0 ? renderSparkline(stats.last5Scores) : '';
+      if (stats.sampleCount >= 1) {
+        lines.push(`  歷史 (n=${stats.sampleCount}, avg ${stats.avgScore.toFixed(1)}): ${sparkline}`);
+      }
+
+      if (stats.sampleCount < 5) {
+        lines.push(`  建議: 資料累積中 (n=${stats.sampleCount}/5)`);
+      } else {
+        const tierMap = opts.modelConfigForAgent?.(agentId) ?? null;
+        const lowerTierModel = resolveLowerTier(tier, tierMap);
+        const ctx = { currentModel: model, lowerTierModel };
+        lines.push(`  建議: ${buildRecommendation(stats, ctx)}`);
+      }
+    }
   }
   lines.push('');
   lines.push('(Identities revealed; scores recorded for this round.)');
   return lines.join('\n');
+}
+
+function resolveLowerTier(
+  tier: AgentTier,
+  tierMap: { low: string; medium: string; high: string } | null,
+): string | null {
+  if (!tierMap) return null;
+  if (tier === 'high') return tierMap.medium;
+  if (tier === 'medium') return tierMap.low;
+  return null;
 }

@@ -130,6 +130,50 @@ describe('BlindReviewStore tier tracking', () => {
   });
 });
 
+describe('formatRevealMessage with stats', () => {
+  function makeSession(agentMeta: Array<{ id: string; name: string; role: string }>): BlindReviewSession {
+    const ids = agentMeta.map((m) => m.id);
+    const codeMap = new Map<string, string>();
+    ids.forEach((id, i) => codeMap.set(`Agent-${String.fromCharCode(65 + i)}`, id));
+    return {
+      threadId: 1, startedAt: Date.now(),
+      codeToAgentId: codeMap,
+      agentIdToRole: new Map(agentMeta.map((m) => [m.id, m.role])),
+      scores: new Map([['Agent-A', 4]]),
+      feedbackText: new Map(),
+      turnLog: [{ agentId: ids[0], tier: 'high', model: 'opus' }],
+      revealed: true,
+    };
+  }
+
+  it('shows 資料累積中 when sample_count < 5', () => {
+    const db = new BlindReviewDB(':memory:');
+    const session = makeSession([{ id: 'huahua', name: '花花', role: 'advocate' }]);
+    const msg = formatRevealMessage(session, new Map([['huahua', { name: '花花', role: 'advocate' }]]), {
+      db,
+      modelConfigForAgent: () => ({ high: 'opus', medium: 'sonnet', low: 'haiku' }),
+    });
+    expect(msg).toContain('資料累積中');
+  });
+
+  it('shows recommendation when sample_count >= 5', () => {
+    const db = new BlindReviewDB(':memory:');
+    db.recordSession({ sessionId: 'seed', threadId: 0, topic: null, agentIds: ['huahua'], startedAt: 'now', revealedAt: 'now' });
+    for (let i = 0; i < 5; i++) {
+      db.recordScore({ sessionId: 'seed', agentId: 'huahua', tier: 'high', model: 'opus', score: 2 });
+    }
+    db.refreshStats('huahua', 'high');
+
+    const session = makeSession([{ id: 'huahua', name: '花花', role: 'advocate' }]);
+    const msg = formatRevealMessage(session, new Map([['huahua', { name: '花花', role: 'advocate' }]]), {
+      db,
+      modelConfigForAgent: () => ({ high: 'opus', medium: 'sonnet', low: 'haiku' }),
+    });
+    expect(msg).toContain('降到');
+    expect(msg).toContain('sonnet');
+  });
+});
+
 describe('BlindReviewStore.markRevealed persistence', () => {
   it('persists session + scores to BlindReviewDB on reveal', () => {
     const db = new BlindReviewDB(':memory:');
