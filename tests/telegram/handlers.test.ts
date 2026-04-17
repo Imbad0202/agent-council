@@ -41,6 +41,17 @@ describe('handlers', () => {
       expect(msg.adversarialMode).toBe('biased');
     });
 
+    it('passes pvgRotate through to CouncilMessage', () => {
+      const telegramMsg = {
+        message_id: 77,
+        text: 'rotate test',
+        date: 1712900000,
+        from: { id: 601357059, first_name: 'T' },
+      };
+      const msg = createCouncilMessageFromTelegram(telegramMsg, { pvgRotate: true });
+      expect(msg.pvgRotate).toBe(true);
+    });
+
     it('handles message without text', () => {
       const telegramMsg = {
         message_id: 43,
