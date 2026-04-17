@@ -13,7 +13,13 @@ import { TurnManager } from '../gateway/turn-manager.js';
 import { AntiSycophancyEngine } from './anti-sycophancy.js';
 import { assignRoles } from './role-assigner.js';
 import { PATTERN_INJECTION_PROMPTS } from './pattern-prompts.js';
-import { parseSneakyTrailer, formatDebrief, pickSneakyTarget, type DebriefRecord } from './sneaky-prover.js';
+import { pickSneakyTarget } from './sneaky-prover.js';
+import {
+  processAdversarialResponse,
+  formatAdversarialDebrief,
+  ADVERSARIAL_MODE_TO_ROLE,
+  type AdversarialDebriefRecord,
+} from './adversarial-provers.js';
 import { BlindReviewStore, buildScoringKeyboard } from './blind-review.js';
 
 type SendFn = (agentId: string, content: string, threadId?: number) => Promise<void>;
@@ -131,17 +137,23 @@ export class DeliberationHandler {
     // Assign roles
     const agentIds = activeWorkers.map((w) => w.id);
     const stressTestMode = message?.stressTest === true;
-    const debriefs: DebriefRecord[] = [];
+    const adversarialMode = message?.adversarialMode;
+    const adversarialDebriefs: AdversarialDebriefRecord[] = [];
     let currentRoles = assignRoles(
       agentIds,
       message.content,
       this.config,
       undefined,
-      stressTestMode ? { allowSneaky: true } : undefined,
+      {
+        allowSneaky: stressTestMode,
+        allowAdversarial: adversarialMode !== undefined,
+      },
     );
-    if (stressTestMode && Object.keys(currentRoles).length >= 2) {
-      const targetAgentId = pickSneakyTarget(Object.keys(currentRoles));
-      currentRoles[targetAgentId] = 'sneaky-prover';
+    if (stressTestMode && agentIds.length >= 2) {
+      currentRoles[pickSneakyTarget(agentIds)] = 'sneaky-prover';
+    }
+    if (adversarialMode && agentIds.length >= 2) {
+      currentRoles[pickSneakyTarget(agentIds)] = ADVERSARIAL_MODE_TO_ROLE[adversarialMode];
     }
 
     const blindReviewMode = message?.blindReview === true;
@@ -218,20 +230,11 @@ export class DeliberationHandler {
         );
       }
 
-      // Strip sneaky-prover trailer before any broadcast or storage
-      let storedContent = response.content;
-      if (role === 'sneaky-prover') {
-        const parsed = parseSneakyTrailer(response.content);
-        if (parsed) {
-          storedContent = parsed.bodyWithoutTrailer;
-          debriefs.push({ agentId: worker.id, kind: parsed.kind, debrief: parsed.debrief });
-        } else {
-          debriefs.push({
-            agentId: worker.id,
-            kind: 'missing-trailer',
-            debrief: 'Sneaky-prover response had no trailer; planted error not declared',
-          });
-        }
+      // Strip adversarial-prover trailers before any broadcast or storage
+      const dispatch = processAdversarialResponse(role, worker.id, response.content);
+      const storedContent = dispatch.storedContent;
+      if (dispatch.debrief) {
+        adversarialDebriefs.push(dispatch.debrief);
       }
 
       if (!response.skip) {
@@ -276,15 +279,15 @@ export class DeliberationHandler {
       }
 
       const responseForStorage =
-        role === 'sneaky-prover' && storedContent !== response.content
+        storedContent !== response.content
           ? { ...response, content: storedContent }
           : response;
       responses.push({ worker, role, response: responseForStorage });
     }
 
-    // Broadcast debrief if stress-test round produced sneaky-prover entries
-    if (debriefs.length > 0) {
-      const debriefMessage = debriefs.map(formatDebrief).join('\n');
+    // Broadcast adversarial-prover debriefs (sneaky / biased / deceptive / calibrated)
+    if (adversarialDebriefs.length > 0) {
+      const debriefMessage = adversarialDebriefs.map(formatAdversarialDebrief).join('\n');
       await this.sendFn('system-debrief', debriefMessage, threadId);
     }
 

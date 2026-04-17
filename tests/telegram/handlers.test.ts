@@ -30,6 +30,17 @@ describe('handlers', () => {
       expect(msg.threadId).toBe(99);
     });
 
+    it('passes adversarialMode through to CouncilMessage', () => {
+      const telegramMsg = {
+        message_id: 55,
+        text: 'test the council',
+        date: 1712900000,
+        from: { id: 601357059, first_name: 'T' },
+      };
+      const msg = createCouncilMessageFromTelegram(telegramMsg, { adversarialMode: 'biased' });
+      expect(msg.adversarialMode).toBe('biased');
+    });
+
     it('handles message without text', () => {
       const telegramMsg = {
         message_id: 43,
