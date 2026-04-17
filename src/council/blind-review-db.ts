@@ -1,6 +1,33 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type {
+  AgentTier,
+  BlindReviewSessionRow,
+  BlindReviewEventInput,
+} from '../types.js';
+
+interface EventRow {
+  event_id: number;
+  session_id: string;
+  agent_id: string;
+  tier: string;
+  model: string;
+  score: number;
+  feedback_text: string | null;
+  scored_at: string;
+}
+
+export interface BlindReviewEventRecord {
+  eventId: number;
+  sessionId: string;
+  agentId: string;
+  tier: AgentTier;
+  model: string;
+  score: number;
+  feedbackText: string | null;
+  scoredAt: string;
+}
 
 export class BlindReviewDB {
   private db: Database.Database;
@@ -53,6 +80,71 @@ export class BlindReviewDB {
         PRIMARY KEY (agent_id, tier)
       );
     `);
+  }
+
+  recordSession(row: BlindReviewSessionRow): void {
+    this.db.prepare(
+      `INSERT INTO blind_review_sessions
+         (session_id, thread_id, topic, agent_ids, started_at, revealed_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      row.sessionId,
+      row.threadId,
+      row.topic,
+      JSON.stringify(row.agentIds),
+      row.startedAt,
+      row.revealedAt,
+    );
+  }
+
+  getSession(sessionId: string): BlindReviewSessionRow | null {
+    const row = this.db.prepare(
+      `SELECT * FROM blind_review_sessions WHERE session_id = ?`
+    ).get(sessionId) as {
+      session_id: string; thread_id: number; topic: string | null;
+      agent_ids: string; started_at: string; revealed_at: string | null;
+    } | undefined;
+    if (!row) return null;
+    return {
+      sessionId: row.session_id,
+      threadId: row.thread_id,
+      topic: row.topic,
+      agentIds: JSON.parse(row.agent_ids) as string[],
+      startedAt: row.started_at,
+      revealedAt: row.revealed_at,
+    };
+  }
+
+  recordScore(input: BlindReviewEventInput): void {
+    this.db.prepare(
+      `INSERT INTO blind_review_events
+         (session_id, agent_id, tier, model, score, feedback_text, scored_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      input.sessionId,
+      input.agentId,
+      input.tier,
+      input.model,
+      input.score,
+      input.feedbackText ?? null,
+      new Date().toISOString(),
+    );
+  }
+
+  getEventsForSession(sessionId: string): BlindReviewEventRecord[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM blind_review_events WHERE session_id = ? ORDER BY event_id ASC`
+    ).all(sessionId) as EventRow[];
+    return rows.map((r) => ({
+      eventId: r.event_id,
+      sessionId: r.session_id,
+      agentId: r.agent_id,
+      tier: r.tier as AgentTier,
+      model: r.model,
+      score: r.score,
+      feedbackText: r.feedback_text,
+      scoredAt: r.scored_at,
+    }));
   }
 
   listTables(): string[] {
