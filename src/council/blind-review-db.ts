@@ -266,6 +266,19 @@ export class BlindReviewDB {
     return row?.session_id ?? null;
   }
 
+  rebuildStats(): void {
+    const pairs = this.db.prepare(
+      `SELECT DISTINCT agent_id, tier FROM blind_review_events WHERE tier != 'unknown'`
+    ).all() as { agent_id: string; tier: string }[];
+    const tx = this.db.transaction(() => {
+      this.db.exec('DELETE FROM blind_review_stats');
+      for (const p of pairs) {
+        this.refreshStats(p.agent_id, p.tier as AgentTier);
+      }
+    });
+    tx();
+  }
+
   getStats(agentId: string, tier: AgentTier): AgentTierStats {
     const row = this.db.prepare(
       `SELECT * FROM blind_review_stats WHERE agent_id = ? AND tier = ?`

@@ -260,3 +260,19 @@ describe('renderSparkline', () => {
     expect(out[4]).toBe('★');
   });
 });
+
+describe('BlindReviewDB.rebuildStats', () => {
+  it('reconstructs stats table from events', () => {
+    const db = new BlindReviewDB(':memory:');
+    db.recordSession({ sessionId: 's1', threadId: 1, topic: null, agentIds: ['a1'], startedAt: 'now', revealedAt: null });
+    for (const score of [2, 3, 4]) {
+      db.recordScore({ sessionId: 's1', agentId: 'a1', tier: 'medium', model: 'sonnet', score });
+    }
+    // Do NOT call refreshStats — mimic a drift scenario
+    expect(db.getStats('a1', 'medium').sampleCount).toBe(0);
+
+    db.rebuildStats();
+    expect(db.getStats('a1', 'medium').sampleCount).toBe(3);
+    expect(db.getStats('a1', 'medium').avgScore).toBeCloseTo(3, 5);
+  });
+});
