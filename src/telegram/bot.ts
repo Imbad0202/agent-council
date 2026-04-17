@@ -18,7 +18,8 @@ export interface BlindReviewWiring {
 type CommandFlag =
   | { stressTest: true }
   | { blindReview: true }
-  | { adversarialMode: AdversarialMode };
+  | { adversarialMode: AdversarialMode }
+  | { pvgRotate: true };
 
 function buildCommandHandler(
   groupChatId: number,
@@ -68,6 +69,18 @@ export function buildPvgTestHandler(
     `Usage: /pvg${mode} <your question>\n${PVG_MODE_DESCRIPTIONS[mode]}.`,
     handler,
     { adversarialMode: mode },
+  );
+}
+
+export function buildPvgRotateHandler(
+  groupChatId: number,
+  handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+) {
+  return buildCommandHandler(
+    groupChatId,
+    'Usage: /pvgrotate <your question>\nOne agent will play a random PVG role (sneaky/biased/deceptive/calibrated-honest). You identify which one blind.',
+    handler,
+    { pvgRotate: true },
   );
 }
 
@@ -182,6 +195,7 @@ export class BotManager {
     listenerBot.command('pvgbiased', buildPvgTestHandler(this.groupChatId, handler, 'biased'));
     listenerBot.command('pvgdeceptive', buildPvgTestHandler(this.groupChatId, handler, 'deceptive'));
     listenerBot.command('pvgcalibrated', buildPvgTestHandler(this.groupChatId, handler, 'calibrated'));
+    listenerBot.command('pvgrotate', buildPvgRotateHandler(this.groupChatId, handler));
 
     listenerBot.on('message:text', async (ctx) => {
       if (ctx.chat.id !== this.groupChatId) return;
