@@ -2,12 +2,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ProviderMessage, ChatOptions, ProviderResponse, SystemPromptPart } from '../../types.js';
 import { BaseProvider } from './base.js';
 
-function toAnthropicSystem(systemPrompt: string | SystemPromptPart[]) {
-  if (typeof systemPrompt === 'string') return systemPrompt;
-  return systemPrompt.map((part) => ({
-    type: 'text' as const,
+function toAnthropicSystem(parts: SystemPromptPart[]): Anthropic.Messages.TextBlockParam[] {
+  return parts.map((part) => ({
+    type: 'text',
     text: part.text,
-    ...(part.cache && { cache_control: { type: 'ephemeral' as const } }),
+    ...(part.cache && { cache_control: { type: 'ephemeral' } }),
   }));
 }
 
@@ -33,7 +32,9 @@ export class ClaudeProvider extends BaseProvider {
       model: options.model,
       max_tokens: options.maxTokens ?? 8192,
       temperature: options.thinking ? 1 : (options.temperature ?? 0.7),
-      system: toAnthropicSystem(options.systemPrompt),
+      system: options.systemPromptParts
+        ? toAnthropicSystem(options.systemPromptParts)
+        : options.systemPrompt,
       messages: anthropicMessages,
       ...(options.thinking && { thinking: options.thinking }),
     });

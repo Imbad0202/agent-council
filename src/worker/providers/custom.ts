@@ -1,5 +1,5 @@
 import type { ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
-import { BaseProvider, flattenSystemPrompt } from './base.js';
+import { BaseProvider } from './base.js';
 
 export class CustomProvider extends BaseProvider {
   readonly name = 'custom';
@@ -16,7 +16,7 @@ export class CustomProvider extends BaseProvider {
     const body = {
       model: options.model,
       messages: [
-        { role: 'system', content: flattenSystemPrompt(options.systemPrompt) },
+        { role: 'system', content: options.systemPrompt },
         ...messages.filter((m) => m.role !== 'system').map((m) => ({
           role: m.role,
           content: m.content,

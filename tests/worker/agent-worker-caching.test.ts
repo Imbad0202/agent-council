@@ -27,7 +27,7 @@ const plainConfig: AgentConfig = { ...cachingConfig, cacheSystemPrompt: undefine
 describe('AgentWorker — system prompt caching', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('sends multi-part systemPrompt with stable prefix cacheable when cacheSystemPrompt=true', async () => {
+  it('sends systemPromptParts with cacheable stable prefix when cacheSystemPrompt=true', async () => {
     const worker = new AgentWorker(cachingConfig, mockProvider, '/tmp/no-memory');
     const messages: CouncilMessage[] = [
       { id: 'm', role: 'human', content: 'q', timestamp: Date.now() },
@@ -36,15 +36,16 @@ describe('AgentWorker — system prompt caching', () => {
     await worker.respond(messages, 'critic');
 
     const options = vi.mocked(mockProvider.chat).mock.calls[0][1];
-    expect(Array.isArray(options.systemPrompt)).toBe(true);
-    const parts = options.systemPrompt as Array<{ text: string; cache?: boolean }>;
+    expect(typeof options.systemPrompt).toBe('string');
+    expect(options.systemPromptParts).toHaveLength(2);
+    const parts = options.systemPromptParts!;
     expect(parts[0].cache).toBe(true);
     expect(parts[0].text).toContain('You are 賓賓');
     expect(parts[1].cache).toBeUndefined();
     expect(parts[1].text).toContain('critic');
   });
 
-  it('sends plain string systemPrompt when cacheSystemPrompt is not set (regression)', async () => {
+  it('does not set systemPromptParts when cacheSystemPrompt is not set (regression)', async () => {
     const worker = new AgentWorker(plainConfig, mockProvider, '/tmp/no-memory');
     const messages: CouncilMessage[] = [
       { id: 'm', role: 'human', content: 'q', timestamp: Date.now() },
@@ -53,6 +54,7 @@ describe('AgentWorker — system prompt caching', () => {
     await worker.respond(messages, 'critic');
 
     const options = vi.mocked(mockProvider.chat).mock.calls[0][1];
+    expect(options.systemPromptParts).toBeUndefined();
     expect(typeof options.systemPrompt).toBe('string');
     expect(options.systemPrompt).toContain('You are 賓賓');
     expect(options.systemPrompt).toContain('critic');

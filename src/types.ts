@@ -87,7 +87,8 @@ export interface ChatOptions {
   model: string;
   maxTokens?: number;
   temperature?: number;
-  systemPrompt: string | SystemPromptPart[];
+  systemPrompt: string;
+  systemPromptParts?: SystemPromptPart[];
   thinking?: ThinkingConfig;
 }
 

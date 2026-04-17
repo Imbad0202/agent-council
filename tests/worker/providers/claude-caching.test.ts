@@ -24,11 +24,12 @@ describe('ClaudeProvider — prompt caching', () => {
     provider = new ClaudeProvider('test-key');
   });
 
-  it('passes array systemPrompt through to SDK with cache_control preserved', async () => {
+  it('uses systemPromptParts with cache_control when provided', async () => {
     const messages: ProviderMessage[] = [{ role: 'user', content: 'Q' }];
     await provider.chat(messages, {
       model: 'claude-opus-4-7',
-      systemPrompt: [
+      systemPrompt: 'FALLBACK',
+      systemPromptParts: [
         { text: 'STABLE PREFIX', cache: true },
         { text: 'VOLATILE SUFFIX' },
       ],
@@ -45,7 +46,7 @@ describe('ClaudeProvider — prompt caching', () => {
     expect(callArgs.system[1].cache_control).toBeUndefined();
   });
 
-  it('plain string systemPrompt still works (regression)', async () => {
+  it('uses systemPrompt string when systemPromptParts is absent', async () => {
     const messages: ProviderMessage[] = [{ role: 'user', content: 'Q' }];
     await provider.chat(messages, {
       model: 'claude-sonnet-4-6',
@@ -56,14 +57,12 @@ describe('ClaudeProvider — prompt caching', () => {
     expect(callArgs.system).toBe('Just a plain string.');
   });
 
-  it('array with no cache flags sends multi-part system without cache_control', async () => {
+  it('emits multi-part system without cache_control when no parts have cache flag', async () => {
     const messages: ProviderMessage[] = [{ role: 'user', content: 'Q' }];
     await provider.chat(messages, {
       model: 'claude-sonnet-4-6',
-      systemPrompt: [
-        { text: 'A' },
-        { text: 'B' },
-      ],
+      systemPrompt: 'fallback',
+      systemPromptParts: [{ text: 'A' }, { text: 'B' }],
     });
 
     const callArgs = createSpy.mock.calls[0][0];
