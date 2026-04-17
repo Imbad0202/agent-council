@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import type { ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
-import { BaseProvider, flattenSystemPrompt } from './base.js';
+import { BaseProvider } from './base.js';
 
 export class OpenAIProvider extends BaseProvider {
   readonly name = 'openai';
@@ -13,7 +13,7 @@ export class OpenAIProvider extends BaseProvider {
 
   async chat(messages: ProviderMessage[], options: ChatOptions): Promise<ProviderResponse> {
     const openaiMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-      { role: 'system', content: flattenSystemPrompt(options.systemPrompt) },
+      { role: 'system', content: options.systemPrompt },
       ...messages.filter((m) => m.role !== 'system').map((m) => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
