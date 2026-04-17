@@ -106,7 +106,11 @@ export class AgentWorker {
     this.stats.modelUsage[model].inputTokens += response.tokensUsed.input;
     this.stats.modelUsage[model].outputTokens += response.tokensUsed.output;
 
-    return response;
+    return {
+      ...response,
+      tierUsed: complexity ?? 'unknown',
+      modelUsed: model,
+    };
   }
 
   getStats(): AgentStats {

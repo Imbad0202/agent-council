@@ -129,6 +129,8 @@ export interface ProviderResponse {
   confidence?: number;
   references?: string[];
   tokensUsed: { input: number; output: number };
+  tierUsed?: AgentTier;
+  modelUsed?: string;
 }
 
 export interface LLMProvider {

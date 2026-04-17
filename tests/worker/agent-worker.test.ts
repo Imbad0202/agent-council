@@ -1,6 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentWorker } from '../../src/worker/agent-worker.js';
-import type { AgentConfig, LLMProvider, CouncilMessage, AgentRole } from '../../src/types.js';
+import type { AgentConfig, LLMProvider, CouncilMessage, AgentRole, ProviderResponse } from '../../src/types.js';
+
+function fakeProvider(response: Partial<ProviderResponse> = {}): LLMProvider {
+  return {
+    name: 'fake',
+    chat: async () => ({
+      content: 'hi', tokensUsed: { input: 1, output: 1 }, ...response,
+    } as ProviderResponse),
+    summarize: async () => 'summary',
+    estimateTokens: () => 0,
+  };
+}
 
 const mockProvider: LLMProvider = {
   name: 'mock',
@@ -65,6 +76,28 @@ describe('AgentWorker', () => {
   it('exposes agent id and name', () => {
     expect(worker.id).toBe('huahua');
     expect(worker.name).toBe('花花');
+  });
+
+  describe('AgentWorker.respond tier/model reporting', () => {
+    const cfg: AgentConfig = {
+      id: 'test', name: 'Test', provider: 'fake', model: 'sonnet',
+      memoryDir: '', personality: '',
+      models: { low: 'haiku', medium: 'sonnet', high: 'opus' },
+    };
+
+    it('returns tierUsed=high and modelUsed=opus when complexity=high', async () => {
+      const w = new AgentWorker(cfg, fakeProvider(), '');
+      const r = await w.respond([], 'advocate', undefined, 'high');
+      expect(r.tierUsed).toBe('high');
+      expect(r.modelUsed).toBe('opus');
+    });
+
+    it('returns tierUsed=unknown when complexity is undefined', async () => {
+      const w = new AgentWorker(cfg, fakeProvider(), '');
+      const r = await w.respond([], 'advocate');
+      expect(r.tierUsed).toBe('unknown');
+      expect(r.modelUsed).toBe('sonnet');
+    });
   });
 
   describe('model tier resolution', () => {
