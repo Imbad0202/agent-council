@@ -22,6 +22,10 @@ export class ClaudeProvider extends BaseProvider {
   }
 
   async chat(messages: ProviderMessage[], options: ChatOptions): Promise<ProviderResponse> {
+    if (options.thinking && options.temperature !== undefined && options.temperature !== 1) {
+      throw new Error(`Anthropic requires temperature=1 when thinking is enabled; got ${options.temperature}`);
+    }
+
     const anthropicMessages = messages
       .filter((m) => m.role !== 'system')
       .map((m) => ({

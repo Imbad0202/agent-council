@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import type { AgentConfig, CouncilConfig } from './types.js';
+import { DEFAULT_SYSTEM_MODEL } from './constants.js';
 
 export function loadAgentConfig(filePath: string): AgentConfig {
   const raw = readFileSync(filePath, 'utf-8');
@@ -8,6 +9,15 @@ export function loadAgentConfig(filePath: string): AgentConfig {
 
   if (!parsed.id || !parsed.name || !parsed.provider || !parsed.model || !parsed.memory_dir || !parsed.personality) {
     throw new Error(`Invalid agent config at ${filePath}: missing required fields (id, name, provider, model, memory_dir, personality)`);
+  }
+
+  if (parsed.thinking) {
+    for (const [tier, cfg] of Object.entries(parsed.thinking)) {
+      const budget = (cfg as { budget_tokens?: unknown })?.budget_tokens;
+      if (typeof budget !== 'number' || !Number.isFinite(budget)) {
+        throw new Error(`Invalid agent config at ${filePath}: thinking.${tier}.budget_tokens must be a number, got ${JSON.stringify(budget)}`);
+      }
+    }
   }
 
   return {
@@ -75,9 +85,9 @@ export function loadCouncilConfig(filePath: string): CouncilConfig {
       autoDispatch: parsed.execution.auto_dispatch ?? true,
       repoPath: parsed.execution.repo_path ?? '.',
     } : undefined,
-    systemModels: parsed.system_models ? {
-      intentClassification: parsed.system_models.intent_classification,
-      taskDecomposition: parsed.system_models.task_decomposition,
-    } : undefined,
+    systemModels: {
+      intentClassification: parsed.system_models?.intent_classification ?? DEFAULT_SYSTEM_MODEL,
+      taskDecomposition: parsed.system_models?.task_decomposition ?? DEFAULT_SYSTEM_MODEL,
+    },
   };
 }
