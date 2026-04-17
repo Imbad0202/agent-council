@@ -318,8 +318,8 @@ describe('DeliberationHandler — blind-review turn recording', () => {
   it('records tierUsed + modelUsed into the blind-review store after each turn', async () => {
     const bus = new EventBus();
     const workers = [
-      makeWorkerWithTier('agent-a', 'Agent A', 'high', 'claude-3-5-sonnet'),
-      makeWorkerWithTier('agent-b', 'Agent B', 'low', 'claude-haiku-3'),
+      makeWorkerWithTier('agent-a', 'Agent A', 'high', 'claude-opus-4-7'),
+      makeWorkerWithTier('agent-b', 'Agent B', 'low', 'claude-sonnet-4-6'),
     ];
     const sendFn = vi.fn().mockResolvedValue(undefined);
     const sendKeyboardFn = vi.fn().mockResolvedValue(undefined);
@@ -355,12 +355,12 @@ describe('DeliberationHandler — blind-review turn recording', () => {
     const turnA = store.getLatestTurnFor(threadId, 'agent-a');
     expect(turnA).not.toBeNull();
     expect(turnA!.tier).toBe('high');
-    expect(turnA!.model).toBe('claude-3-5-sonnet');
+    expect(turnA!.model).toBe('claude-opus-4-7');
 
     const turnB = store.getLatestTurnFor(threadId, 'agent-b');
     expect(turnB).not.toBeNull();
     expect(turnB!.tier).toBe('low');
-    expect(turnB!.model).toBe('claude-haiku-3');
+    expect(turnB!.model).toBe('claude-sonnet-4-6');
   });
 
   it('does NOT record turns when blindReview is false', async () => {

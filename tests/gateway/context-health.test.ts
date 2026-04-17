@@ -13,7 +13,7 @@ describe('ContextHealthMonitor', () => {
   let monitor: ContextHealthMonitor;
 
   beforeEach(() => {
-    monitor = new ContextHealthMonitor(10, mockProvider, 'claude-opus-4-6');
+    monitor = new ContextHealthMonitor(10, mockProvider, 'claude-opus-4-7');
   });
 
   it('keeps recent messages within window', () => {

@@ -6,13 +6,15 @@ bot_token_env: TELEGRAM_BOT_TOKEN_BINBIN
 topics: [code, risk, testing, general]
 memory_dir: 賓賓/global
 models:
-  low: claude-haiku-4-5-20251001
+  low: claude-sonnet-4-6
   medium: claude-sonnet-4-6
   high: claude-opus-4-7
 default_model_tier: medium
+# Opus 4.7 uses adaptive thinking — omit budget_tokens so the model decides
+# how deeply to reason per turn. (Older models that require a fixed budget
+# can still set `budget_tokens: N` here.)
 thinking:
-  high:
-    budget_tokens: 32000
+  high: {}
 cache_system_prompt: true
 personality: |
   你是賓賓。你有自己的觀點和判斷，不會為了和諧而放棄立場。

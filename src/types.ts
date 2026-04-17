@@ -77,7 +77,9 @@ export interface AgentConfig {
   roleType?: 'peer' | 'facilitator';
   models?: { low: string; medium: string; high: string };
   defaultModelTier?: Complexity;
-  thinking?: Partial<Record<Complexity, { budget_tokens: number }>>;
+  // Opus 4.7+ uses adaptive thinking — leave `thinking` unset to rely on the default.
+  // `budget_tokens` is optional for compatibility with older models that expect a budget.
+  thinking?: Partial<Record<Complexity, { budget_tokens?: number }>>;
   cacheSystemPrompt?: boolean;
 }
 
@@ -115,10 +117,10 @@ export interface ProviderMessage {
   content: string;
 }
 
-export interface ThinkingConfig {
-  type: 'enabled';
-  budget_tokens: number;
-}
+export type ThinkingConfig =
+  | { type: 'enabled'; budget_tokens: number }  // fixed budget (legacy / Sonnet).
+  | { type: 'adaptive' }                         // Opus 4.7+: let the model decide.
+  | { type: 'disabled' };
 
 export interface SystemPromptPart {
   text: string;

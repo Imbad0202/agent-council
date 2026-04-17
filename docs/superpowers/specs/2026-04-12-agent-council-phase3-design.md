@@ -35,7 +35,7 @@ Each agent has its own Telegram bot with independent name, avatar, and token.
 id: huahua
 name: 花花
 provider: claude
-model: claude-opus-4-6
+model: claude-opus-4-7
 bot_token_env: TELEGRAM_BOT_TOKEN_HUAHUA
 topics: [architecture, code, strategy, general]
 memory_dir: 花花/global
@@ -282,7 +282,7 @@ memory:
 
 anti_pattern:
   enabled: true
-  detection_model: claude-haiku-4-5-20251001
+  detection_model: claude-sonnet-4-6
   start_after_turn: 3
   detect_every_n_turns: 2
 
@@ -299,7 +299,7 @@ participation:
 id: huahua
 name: 花花
 provider: claude
-model: claude-opus-4-6
+model: claude-opus-4-7
 bot_token_env: TELEGRAM_BOT_TOKEN_HUAHUA
 topics: [architecture, code, strategy, general]
 memory_dir: 花花/global

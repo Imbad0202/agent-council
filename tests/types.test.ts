@@ -94,7 +94,7 @@ describe('types', () => {
       id: 'test',
       name: 'Test',
       provider: 'claude',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       memoryDir: 'test/global',
       personality: 'You are test.',
       botTokenEnv: 'TELEGRAM_BOT_TOKEN_TEST',
@@ -154,11 +154,11 @@ describe('types', () => {
       memoryDir: 'test/global',
       personality: 'You facilitate.',
       roleType: 'facilitator',
-      models: { low: 'claude-haiku-3-5', medium: 'claude-sonnet-4-6', high: 'claude-opus-4-5' },
+      models: { low: 'claude-sonnet-4-6', medium: 'claude-sonnet-4-6', high: 'claude-opus-4-7' },
       defaultModelTier: 'medium',
     };
     expect(config.roleType).toBe('facilitator');
-    expect(config.models?.low).toBe('claude-haiku-3-5');
+    expect(config.models?.low).toBe('claude-sonnet-4-6');
     expect(config.defaultModelTier).toBe('medium');
   });
 
@@ -167,7 +167,7 @@ describe('types', () => {
       id: 'test',
       name: 'Test',
       provider: 'claude',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       memoryDir: 'test/global',
       personality: 'You are test.',
     };
@@ -200,11 +200,11 @@ describe('types', () => {
       skipCount: 1,
       modelUsage: {
         'claude-sonnet-4-6': { calls: 4, inputTokens: 1000, outputTokens: 500 },
-        'claude-haiku-3-5': { calls: 1, inputTokens: 200, outputTokens: 100 },
+        'claude-opus-4-7': { calls: 1, inputTokens: 200, outputTokens: 100 },
       },
     };
     expect(stats.modelUsage['claude-sonnet-4-6'].calls).toBe(4);
-    expect(stats.modelUsage['claude-haiku-3-5'].outputTokens).toBe(100);
+    expect(stats.modelUsage['claude-opus-4-7'].outputTokens).toBe(100);
   });
 
   it('ExecutionConfig has required fields', () => {

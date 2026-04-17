@@ -177,7 +177,7 @@ New `PatternDetector` class in `src/council/pattern-detector.ts`:
 
 - Skip detection for first 3 turns (insufficient context)
 - Run detection every 2 turns, not every turn
-- Use `pattern_detection_model` (default: `claude-haiku-4-5-20251001`) — cheaper than main model
+- Use `pattern_detection_model` (default: `claude-sonnet-4-6`) — cheaper than main model
 
 ---
 
@@ -248,7 +248,7 @@ memory:
 
 anti_pattern:
   enabled: true
-  detection_model: claude-haiku-4-5-20251001
+  detection_model: claude-sonnet-4-6
   start_after_turn: 3
   detect_every_n_turns: 2
 ```

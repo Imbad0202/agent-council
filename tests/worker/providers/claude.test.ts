@@ -31,7 +31,7 @@ describe('ClaudeProvider', () => {
       { role: 'user', content: 'What do you think about X?' },
     ];
     const response = await provider.chat(messages, {
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       systemPrompt: 'You are a critic.',
     });
 
@@ -51,7 +51,7 @@ describe('ClaudeProvider', () => {
   });
 
   it('summarizes text', async () => {
-    const summary = await provider.summarize('A long discussion about monorepos...', 'claude-opus-4-6');
+    const summary = await provider.summarize('A long discussion about monorepos...', 'claude-opus-4-7');
     expect(typeof summary).toBe('string');
     expect(summary.length).toBeGreaterThan(0);
   });
@@ -61,7 +61,7 @@ describe('ClaudeProvider', () => {
       const messages: ProviderMessage[] = [
         { role: 'user', content: 'Hello' },
       ];
-      const options = { model: 'claude-opus-4-6', systemPrompt: 'You are helpful.' };
+      const options = { model: 'claude-opus-4-7', systemPrompt: 'You are helpful.' };
 
       const rateLimitError = Object.assign(new Error('Rate limited'), { status: 429 });
       const successResponse = {
@@ -73,11 +73,11 @@ describe('ClaudeProvider', () => {
         .mockRejectedValueOnce(rateLimitError)
         .mockResolvedValueOnce(successResponse);
 
-      const response = await provider.chatWithFallback(messages, options, ['claude-haiku-3-5']);
+      const response = await provider.chatWithFallback(messages, options, ['claude-sonnet-4-6']);
 
       expect(chatSpy).toHaveBeenCalledTimes(2);
-      expect(chatSpy).toHaveBeenNthCalledWith(1, messages, { ...options, model: 'claude-opus-4-6' });
-      expect(chatSpy).toHaveBeenNthCalledWith(2, messages, { ...options, model: 'claude-haiku-3-5' });
+      expect(chatSpy).toHaveBeenNthCalledWith(1, messages, { ...options, model: 'claude-opus-4-7' });
+      expect(chatSpy).toHaveBeenNthCalledWith(2, messages, { ...options, model: 'claude-sonnet-4-6' });
       expect(response.content).toBe('Fallback response');
     });
 
@@ -85,14 +85,14 @@ describe('ClaudeProvider', () => {
       const messages: ProviderMessage[] = [
         { role: 'user', content: 'Hello' },
       ];
-      const options = { model: 'claude-opus-4-6', systemPrompt: 'You are helpful.' };
+      const options = { model: 'claude-opus-4-7', systemPrompt: 'You are helpful.' };
 
       const rateLimitError = Object.assign(new Error('Rate limited'), { status: 429 });
 
       vi.spyOn(provider, 'chat').mockRejectedValue(rateLimitError);
 
       await expect(
-        provider.chatWithFallback(messages, options, ['claude-haiku-3-5']),
+        provider.chatWithFallback(messages, options, ['claude-sonnet-4-6']),
       ).rejects.toThrow();
     });
   });

@@ -13,7 +13,7 @@ describe('buildSystemPrompt', () => {
     id: 'huahua',
     name: '花花',
     provider: 'claude',
-    model: 'claude-opus-4-6',
+    model: 'claude-opus-4-7',
     memoryDir: '花花/global',
     personality: 'You are 花花. You have strong opinions.',
   };

@@ -27,15 +27,15 @@ describe('loadCouncilConfig — systemModels defaults', () => {
     mkdirSync(testDir, { recursive: true });
   });
 
-  it('sets haiku defaults for both fields when system_models block is absent', () => {
+  it('sets sonnet-4-6 defaults for both fields when system_models block is absent', () => {
     writeFileSync(join(testDir, 'council.yaml'), MINIMAL_BASE);
     const config = loadCouncilConfig(join(testDir, 'council.yaml'));
     expect(config.systemModels).toBeDefined();
-    expect(config.systemModels!.intentClassification).toBe('claude-haiku-4-5-20251001');
-    expect(config.systemModels!.taskDecomposition).toBe('claude-haiku-4-5-20251001');
+    expect(config.systemModels!.intentClassification).toBe('claude-sonnet-4-6');
+    expect(config.systemModels!.taskDecomposition).toBe('claude-sonnet-4-6');
   });
 
-  it('fills missing individual fields with haiku default', () => {
+  it('fills missing individual fields with sonnet-4-6 default', () => {
     const yaml = MINIMAL_BASE + `
 system_models:
   intent_classification: claude-sonnet-4-6
@@ -43,7 +43,7 @@ system_models:
     writeFileSync(join(testDir, 'council.yaml'), yaml);
     const config = loadCouncilConfig(join(testDir, 'council.yaml'));
     expect(config.systemModels!.intentClassification).toBe('claude-sonnet-4-6');
-    expect(config.systemModels!.taskDecomposition).toBe('claude-haiku-4-5-20251001');
+    expect(config.systemModels!.taskDecomposition).toBe('claude-sonnet-4-6');
   });
 
   it('honors both fields when set', () => {

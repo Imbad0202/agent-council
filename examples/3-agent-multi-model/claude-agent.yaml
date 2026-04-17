@@ -1,7 +1,7 @@
 id: claude
 name: Claude
 provider: claude
-model: claude-opus-4-6
+model: claude-opus-4-7
 bot_token_env: TELEGRAM_BOT_TOKEN_CLAUDE
 topics: [architecture, strategy, general]
 memory_dir: ""

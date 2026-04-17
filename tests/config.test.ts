@@ -18,7 +18,7 @@ describe('config', () => {
 id: testbot
 name: TestBot
 provider: claude
-model: claude-opus-4-6
+model: claude-opus-4-7
 memory_dir: TestBot/global
 personality: |
   You are TestBot.
@@ -28,7 +28,7 @@ personality: |
       expect(config.id).toBe('testbot');
       expect(config.name).toBe('TestBot');
       expect(config.provider).toBe('claude');
-      expect(config.model).toBe('claude-opus-4-6');
+      expect(config.model).toBe('claude-opus-4-7');
       expect(config.memoryDir).toBe('TestBot/global');
       expect(config.personality).toContain('You are TestBot.');
     });
@@ -43,7 +43,7 @@ personality: |
 id: testbot
 name: TestBot
 provider: claude
-model: claude-opus-4-6
+model: claude-opus-4-7
 memory_dir: TestBot/global
 bot_token_env: TELEGRAM_BOT_TOKEN_TEST
 topics: [code, architecture]
@@ -61,13 +61,13 @@ personality: |
 id: facilitatorbot
 name: FacilitatorBot
 provider: claude
-model: claude-opus-4-6
+model: claude-opus-4-7
 memory_dir: FacilitatorBot/global
 role_type: facilitator
 models:
-  low: claude-haiku-4-5-20251001
-  medium: claude-sonnet-4-5
-  high: claude-opus-4-6
+  low: claude-sonnet-4-6
+  medium: claude-sonnet-4-6
+  high: claude-opus-4-7
 default_model_tier: medium
 personality: |
   You are a facilitator.
@@ -76,9 +76,9 @@ personality: |
       const config = loadAgentConfig(join(testDir, 'agents', 'facilitator.yaml'));
       expect(config.roleType).toBe('facilitator');
       expect(config.models).toEqual({
-        low: 'claude-haiku-4-5-20251001',
-        medium: 'claude-sonnet-4-5',
-        high: 'claude-opus-4-6',
+        low: 'claude-sonnet-4-6',
+        medium: 'claude-sonnet-4-6',
+        high: 'claude-opus-4-7',
       });
       expect(config.defaultModelTier).toBe('medium');
     });
@@ -88,7 +88,7 @@ personality: |
 id: peerbot
 name: PeerBot
 provider: claude
-model: claude-opus-4-6
+model: claude-opus-4-7
 memory_dir: PeerBot/global
 personality: |
   You are a peer agent.
@@ -153,7 +153,7 @@ memory:
   consolidation_threshold: 5
 anti_pattern:
   enabled: true
-  detection_model: claude-haiku-4-5-20251001
+  detection_model: claude-sonnet-4-6
   start_after_turn: 3
   detect_every_n_turns: 2
 `;
@@ -163,7 +163,7 @@ anti_pattern:
       expect(config.memory?.endKeywords).toContain('結束');
       expect(config.memory?.archiveThreshold).toBe(30);
       expect(config.antiPattern?.enabled).toBe(true);
-      expect(config.antiPattern?.detectionModel).toBe('claude-haiku-4-5-20251001');
+      expect(config.antiPattern?.detectionModel).toBe('claude-sonnet-4-6');
     });
 
     it('parses participation config', () => {

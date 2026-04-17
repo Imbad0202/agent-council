@@ -36,7 +36,7 @@ describe('IntentGate — classificationModel config', () => {
     expect(options.model).toBe('claude-opus-4-7');
   });
 
-  it('defaults to claude-haiku-4-5-20251001 when no model is passed (backward compat)', async () => {
+  it('defaults to claude-sonnet-4-6 when no model is passed (backward compat)', async () => {
     const provider = createMockProvider('{"intent": "deliberation", "complexity": "medium"}');
     const chatSpy = vi.spyOn(provider, 'chat');
     const bus = new EventBus();
@@ -49,6 +49,6 @@ describe('IntentGate — classificationModel config', () => {
     await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
     const options = chatSpy.mock.calls[0][1];
-    expect(options.model).toBe('claude-haiku-4-5-20251001');
+    expect(options.model).toBe('claude-sonnet-4-6');
   });
 });
