@@ -1,4 +1,3 @@
-// src/council/pvg-rotate-store.ts
 import type { AdversarialRole, AdversarialDebriefRecord } from './adversarial-provers.js';
 
 export interface PvgRotateSession {

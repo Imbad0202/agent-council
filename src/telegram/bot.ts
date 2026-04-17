@@ -9,6 +9,7 @@ import { formatGuessReveal, ROTATION_CALLBACK_PATTERN } from '../council/pvg-rot
 import { formatAdversarialDebrief } from '../council/adversarial-provers.js';
 import type { PvgRotateStore } from '../council/pvg-rotate-store.js';
 import type { PvgRotateDB } from '../council/pvg-rotate-db.js';
+import { emptyPvgRotateStats } from '../council/pvg-rotate-db.js';
 import { randomUUID } from 'node:crypto';
 
 export interface BlindReviewWiring {
@@ -184,16 +185,7 @@ export function buildPvgRotateCallback(
     }
     await ctx.answerCallbackQuery({ text: result.correct ? '✅' : '❌' });
 
-    let stats = {
-      total: 0,
-      correct: 0,
-      perVector: {
-        'sneaky-prover': { hit: 0, miss: 0 },
-        'biased-prover': { hit: 0, miss: 0 },
-        'deceptive-prover': { hit: 0, miss: 0 },
-        'calibrated-prover': { hit: 0, miss: 0 },
-      },
-    };
+    let stats = emptyPvgRotateStats();
     if (db) {
       try {
         db.recordGuess({

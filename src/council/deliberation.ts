@@ -307,13 +307,12 @@ export class DeliberationHandler {
       responses.push({ worker, role, response: responseForStorage });
     }
 
-    // Attach planted debrief to pvg-rotate store before broadcast decision
     if (rotationMode && rotationPlantedRole) {
       const planted = adversarialDebriefs.find((d) => d.role === rotationPlantedRole);
       if (planted) this.pvgRotateStore.attachDebrief(threadId, planted);
     }
 
-    // Broadcast adversarial-prover debriefs — rotation mode suppresses broadcast and sends keyboard instead
+    // Rotation mode suppresses debrief broadcast; user sees planted role only after guessing via keyboard.
     if (rotationMode && rotationPlantedRole && this.sendKeyboardFn) {
       const keyboard = buildRotationKeyboard();
       await this.sendKeyboardFn(

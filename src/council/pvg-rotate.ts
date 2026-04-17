@@ -1,4 +1,3 @@
-// src/council/pvg-rotate.ts
 import type { AdversarialRole } from './adversarial-provers.js';
 import { InlineKeyboard } from 'grammy';
 import type { PvgRotateStats } from './pvg-rotate-db.js';
@@ -24,7 +23,9 @@ const BUTTONS: Array<{ label: string; role: AdversarialRole }> = [
   { label: 'Calibrated (honest)', role: 'calibrated-prover' },
 ];
 
-export const ROTATION_CALLBACK_PATTERN = /^pvg-rotate-guess:(sneaky-prover|biased-prover|deceptive-prover|calibrated-prover)$/;
+export const ROTATION_CALLBACK_PATTERN = new RegExp(
+  `^pvg-rotate-guess:(${ROTATION_ROLES.join('|')})$`,
+);
 
 export function buildRotationKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();

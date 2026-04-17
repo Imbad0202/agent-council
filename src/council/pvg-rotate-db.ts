@@ -30,11 +30,26 @@ const ALL_ROLES: AdversarialRole[] = [
   'calibrated-prover',
 ];
 
+export function emptyPvgRotateStats(): PvgRotateStats {
+  return {
+    total: 0,
+    correct: 0,
+    perVector: {
+      'sneaky-prover': { hit: 0, miss: 0 },
+      'biased-prover': { hit: 0, miss: 0 },
+      'deceptive-prover': { hit: 0, miss: 0 },
+      'calibrated-prover': { hit: 0, miss: 0 },
+    },
+  };
+}
+
 export class PvgRotateDB {
   private db: Database.Database;
 
   constructor(dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true });
+    if (dbPath !== ':memory:') {
+      mkdirSync(dirname(dbPath), { recursive: true });
+    }
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(`
@@ -84,25 +99,19 @@ export class PvgRotateDB {
         correct: number;
       }>;
 
-    const perVector: Record<AdversarialRole, VectorStats> = {
-      'sneaky-prover': { hit: 0, miss: 0 },
-      'biased-prover': { hit: 0, miss: 0 },
-      'deceptive-prover': { hit: 0, miss: 0 },
-      'calibrated-prover': { hit: 0, miss: 0 },
-    };
-
-    let correctCount = 0;
+    const stats = emptyPvgRotateStats();
     for (const row of rows) {
       if (!ALL_ROLES.includes(row.planted_role as AdversarialRole)) continue;
       const planted = row.planted_role as AdversarialRole;
       if (row.correct === 1) {
-        perVector[planted].hit += 1;
-        correctCount += 1;
+        stats.perVector[planted].hit += 1;
+        stats.correct += 1;
       } else {
-        perVector[planted].miss += 1;
+        stats.perVector[planted].miss += 1;
       }
     }
-    return { total: rows.length, correct: correctCount, perVector };
+    stats.total = rows.length;
+    return stats;
   }
 
   close(): void {
