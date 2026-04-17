@@ -1,6 +1,7 @@
 // tests/telegram/blindreview-callback.test.ts
 import { describe, it, expect, vi } from 'vitest';
 import { BlindReviewStore } from '../../src/council/blind-review.js';
+import { BlindReviewDB } from '../../src/council/blind-review-db.js';
 import { EventBus } from '../../src/events/bus.js';
 
 describe('br-score callback handler', () => {
@@ -74,6 +75,56 @@ describe('br-score callback handler', () => {
     await fn(ctx);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ threadId: 200, code: 'Agent-A', score: 3, allScored: false });
+  });
+
+  it('passes db + modelConfigForAgent to formatRevealMessage so stats appear in reveal', async () => {
+    const { buildBlindReviewCallback } = await import('../../src/telegram/bot.js');
+    const db = new BlindReviewDB(':memory:');
+    const store = new BlindReviewStore();
+    store.create(300, ['a'], new Map([['a', 'critic']]));
+
+    // Pre-seed 5 scores so stats are available
+    const session = store.get(300)!;
+    session.turnLog.push({ agentId: 'a', tier: 'high', model: 'gpt-4o' });
+    const sessionId = `300:${session.startedAt}`;
+    db.persistSession({
+      sessionRow: {
+        sessionId,
+        threadId: 300,
+        topic: null,
+        agentIds: ['a'],
+        startedAt: new Date(session.startedAt).toISOString(),
+        revealedAt: null,
+      },
+      scores: [1, 2, 3, 4, 5].map((score) => ({
+        sessionId,
+        agentId: 'a',
+        tier: 'high' as const,
+        model: 'gpt-4o',
+        score,
+        feedbackText: null,
+      })),
+    });
+
+    const sendFn = vi.fn();
+    const agentMeta = new Map([['a', { name: 'Solo', role: 'critic' }]]);
+    const modelConfigForAgent = vi.fn().mockReturnValue({ low: 'gpt-3.5', medium: 'gpt-4', high: 'gpt-4o' });
+
+    const ctx: any = {
+      chat: { id: 100 },
+      match: ['br-score:Agent-A:4', 'Agent-A', '4'],
+      answerCallbackQuery: vi.fn(),
+      message: { message_thread_id: 300 },
+    };
+
+    const fn = buildBlindReviewCallback(100, store, sendFn, agentMeta, undefined, db, modelConfigForAgent);
+    await fn(ctx);
+
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    const revealText: string = sendFn.mock.calls[0][1];
+    // Stats line should appear (歷史) and recommendation (建議)
+    expect(revealText).toContain('歷史');
+    expect(revealText).toContain('建議');
   });
 
   it('ignores callback from wrong chat', async () => {

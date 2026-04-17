@@ -8,6 +8,17 @@
  */
 
 import { InlineKeyboard } from 'grammy';
+import type { AgentTier } from '../types.js';
+import type { BlindReviewDB } from './blind-review-db.js';
+import { buildRecommendation, renderSparkline } from './blind-review-db.js';
+
+type PersistFailedHandler = (evt: { threadId: number; sessionId: string; error: Error }) => void;
+
+export interface TurnRecord {
+  agentId: string;
+  tier: AgentTier;
+  model: string;
+}
 
 export interface BlindReviewSession {
   threadId: number;
@@ -15,6 +26,8 @@ export interface BlindReviewSession {
   codeToAgentId: Map<string, string>;
   agentIdToRole: Map<string, string>;
   scores: Map<string, number>;
+  feedbackText: Map<string, string>;
+  turnLog: TurnRecord[];
   revealed: boolean;
 }
 
@@ -48,6 +61,8 @@ export function assignCodes(agentIds: string[]): Map<string, string> {
  */
 export class BlindReviewStore {
   private sessions = new Map<number, BlindReviewSession>();
+  private db: BlindReviewDB | null = null;
+  private persistFailedHandlers: PersistFailedHandler[] = [];
 
   create(
     threadId: number,
@@ -65,6 +80,8 @@ export class BlindReviewStore {
       codeToAgentId,
       agentIdToRole: new Map(roles),
       scores: new Map(),
+      feedbackText: new Map(),
+      turnLog: [],
       revealed: false,
     };
     this.sessions.set(threadId, session);
@@ -85,14 +102,81 @@ export class BlindReviewStore {
     return { allScored };
   }
 
+  attachDB(db: BlindReviewDB): void {
+    this.db = db;
+  }
+
+  onPersistFailed(handler: PersistFailedHandler): void {
+    this.persistFailedHandlers.push(handler);
+  }
+
   markRevealed(threadId: number): void {
     const session = this.sessions.get(threadId);
-    if (session) session.revealed = true;
+    if (!session) return;
+    session.revealed = true;
+    if (!this.db) return;
+
+    const sessionId = `${threadId}:${session.startedAt}`;
+    const now = new Date().toISOString();
+    const startedAtIso = new Date(session.startedAt).toISOString();
+
+    const scores: Array<{
+      sessionId: string; agentId: string; tier: AgentTier; model: string; score: number;
+    }> = [];
+    for (const [code, score] of session.scores.entries()) {
+      const agentId = session.codeToAgentId.get(code);
+      if (!agentId) continue;
+      const latest = this.getLatestTurnFor(threadId, agentId);
+      scores.push({
+        sessionId,
+        agentId,
+        tier: latest?.tier ?? 'unknown',
+        model: latest?.model ?? 'unknown',
+        score,
+      });
+    }
+
+    try {
+      this.db.persistSession({
+        sessionRow: {
+          sessionId,
+          threadId,
+          topic: null,
+          agentIds: [...session.codeToAgentId.values()],
+          startedAt: startedAtIso,
+          revealedAt: now,
+        },
+        scores,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      for (const h of this.persistFailedHandlers) {
+        h({ threadId, sessionId, error: err });
+      }
+    }
   }
 
   delete(threadId: number): void {
     this.sessions.delete(threadId);
   }
+
+  recordTurn(threadId: number, agentId: string, tier: AgentTier, model: string): void {
+    const session = this.sessions.get(threadId);
+    if (!session || session.revealed) return;
+    session.turnLog.push({ agentId, tier, model });
+  }
+
+  getLatestTurnFor(threadId: number, agentId: string): { tier: AgentTier; model: string } | null {
+    const session = this.sessions.get(threadId);
+    if (!session) return null;
+    const record = [...session.turnLog].reverse().find((t) => t.agentId === agentId);
+    return record ? { tier: record.tier, model: record.model } : null;
+  }
+}
+
+export interface FormatRevealOptions {
+  db?: BlindReviewDB;
+  modelConfigForAgent?: (agentId: string) => { low: string; medium: string; high: string } | null;
 }
 
 export function buildScoringKeyboard(codes: string[]): InlineKeyboard {
@@ -109,6 +193,7 @@ export function buildScoringKeyboard(codes: string[]): InlineKeyboard {
 export function formatRevealMessage(
   session: BlindReviewSession,
   agentMeta: Map<string, { name: string; role: string }>,
+  opts: FormatRevealOptions = {},
 ): string {
   const lines: string[] = ['🎭 Blind Review Reveal', ''];
   for (const [code, agentId] of session.codeToAgentId.entries()) {
@@ -116,9 +201,41 @@ export function formatRevealMessage(
     const role = session.agentIdToRole.get(agentId) ?? agentMeta.get(agentId)?.role ?? 'unknown';
     const score = session.scores.get(code);
     const scoreStr = score !== undefined ? `your score: ${score}★` : 'not scored';
-    lines.push(`${code} → ${name} (role: ${role}) — ${scoreStr}`);
+
+    const latest = session.turnLog.slice().reverse().find((t) => t.agentId === agentId);
+    const tier = latest?.tier ?? 'unknown';
+    const model = latest?.model ?? 'unknown';
+
+    lines.push(`${code} → ${name} (${model}, ${role}) — ${scoreStr}`);
+
+    if (opts.db && tier !== 'unknown') {
+      const stats = opts.db.getStats(agentId, tier);
+      const sparkline = stats.sampleCount > 0 ? renderSparkline(stats.last5Scores) : '';
+      if (stats.sampleCount >= 1) {
+        lines.push(`  歷史 (n=${stats.sampleCount}, avg ${stats.avgScore.toFixed(1)}): ${sparkline}`);
+      }
+
+      if (stats.sampleCount < 5) {
+        lines.push(`  建議: 資料累積中 (n=${stats.sampleCount}/5)`);
+      } else {
+        const tierMap = opts.modelConfigForAgent?.(agentId) ?? null;
+        const lowerTierModel = resolveLowerTier(tier, tierMap);
+        const ctx = { currentModel: model, lowerTierModel };
+        lines.push(`  建議: ${buildRecommendation(stats, ctx)}`);
+      }
+    }
   }
   lines.push('');
   lines.push('(Identities revealed; scores recorded for this round.)');
   return lines.join('\n');
+}
+
+function resolveLowerTier(
+  tier: AgentTier,
+  tierMap: { low: string; medium: string; high: string } | null,
+): string | null {
+  if (!tierMap) return null;
+  if (tier === 'high') return tierMap.medium;
+  if (tier === 'medium') return tierMap.low;
+  return null;
 }

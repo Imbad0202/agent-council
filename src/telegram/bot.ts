@@ -2,6 +2,7 @@ import { Bot, Context, InlineKeyboard } from 'grammy';
 import { createCouncilMessageFromTelegram } from './handlers.js';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
+import type { BlindReviewDB } from '../council/blind-review-db.js';
 import type { EventBus } from '../events/bus.js';
 
 export interface BlindReviewWiring {
@@ -9,6 +10,8 @@ export interface BlindReviewWiring {
   sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>;
   agentMeta: Map<string, { name: string; role: string }>;
   bus?: EventBus;
+  db?: BlindReviewDB;
+  modelConfigForAgent?: (agentId: string) => { low: string; medium: string; high: string } | null;
 }
 
 type CommandFlag = { stressTest: true } | { blindReview: true };
@@ -78,6 +81,8 @@ export function buildBlindReviewCallback(
   sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>,
   agentMeta: Map<string, { name: string; role: string }>,
   bus?: EventBus,
+  db?: BlindReviewDB,
+  modelConfigForAgent?: (agentId: string) => { low: string; medium: string; high: string } | null,
 ) {
   return async (ctx: Context) => {
     if (ctx.chat?.id !== groupChatId) return;
@@ -97,7 +102,7 @@ export function buildBlindReviewCallback(
     if (result.allScored) {
       const session = store.get(threadId);
       if (session) {
-        const reveal = formatRevealMessage(session, agentMeta);
+        const reveal = formatRevealMessage(session, agentMeta, { db, modelConfigForAgent });
         await sendFn('blind-review-reveal', reveal, threadId);
         store.markRevealed(threadId);
         bus?.emit('blind-review.revealed', { threadId });
@@ -169,6 +174,8 @@ export class BotManager {
         blindReviewWiring.sendFn,
         blindReviewWiring.agentMeta,
         blindReviewWiring.bus,
+        blindReviewWiring.db,
+        blindReviewWiring.modelConfigForAgent,
       ));
     }
   }

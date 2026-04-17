@@ -4,6 +4,7 @@ import { EventBus } from '../../src/events/bus.js';
 import type { EventMap } from '../../src/events/bus.js';
 import type { AgentWorker } from '../../src/worker/agent-worker.js';
 import type { CouncilConfig, CouncilMessage, ProviderResponse } from '../../src/types.js';
+import type { AgentTier } from '../../src/types.js';
 
 function makeWorker(id: string, name: string): AgentWorker {
   return {
@@ -295,5 +296,108 @@ describe('DeliberationHandler', () => {
     const facilitatorMsg = historyArg.find((m) => m.agentId === 'facilitator');
     expect(facilitatorMsg).toBeDefined();
     expect(facilitatorMsg!.content).toBe('Let us focus on the practical implications.');
+  });
+});
+
+describe('DeliberationHandler — blind-review turn recording', () => {
+  function makeWorkerWithTier(id: string, name: string, tier: AgentTier, model: string): AgentWorker {
+    return {
+      id,
+      name,
+      respond: vi.fn<[], Promise<ProviderResponse>>().mockResolvedValue({
+        content: `Response from ${id}`,
+        confidence: 0.8,
+        references: [],
+        tokensUsed: { input: 100, output: 50 },
+        tierUsed: tier,
+        modelUsed: model,
+      }),
+    } as unknown as AgentWorker;
+  }
+
+  it('records tierUsed + modelUsed into the blind-review store after each turn', async () => {
+    const bus = new EventBus();
+    const workers = [
+      makeWorkerWithTier('agent-a', 'Agent A', 'high', 'claude-3-5-sonnet'),
+      makeWorkerWithTier('agent-b', 'Agent B', 'low', 'claude-haiku-3'),
+    ];
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+    const sendKeyboardFn = vi.fn().mockResolvedValue(undefined);
+    const handler = new DeliberationHandler(bus, workers, minConfig, sendFn, {
+      sendKeyboardFn,
+    });
+
+    const store = handler.getBlindReviewStore();
+    const threadId = 99;
+
+    const message: CouncilMessage = {
+      id: 'msg-blind-1',
+      role: 'human',
+      content: 'Evaluate this proposal',
+      timestamp: Date.now(),
+      threadId,
+      blindReview: true,
+    };
+
+    const done = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', () => resolve());
+    });
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId,
+      message,
+    });
+
+    await done;
+
+    const turnA = store.getLatestTurnFor(threadId, 'agent-a');
+    expect(turnA).not.toBeNull();
+    expect(turnA!.tier).toBe('high');
+    expect(turnA!.model).toBe('claude-3-5-sonnet');
+
+    const turnB = store.getLatestTurnFor(threadId, 'agent-b');
+    expect(turnB).not.toBeNull();
+    expect(turnB!.tier).toBe('low');
+    expect(turnB!.model).toBe('claude-haiku-3');
+  });
+
+  it('does NOT record turns when blindReview is false', async () => {
+    const bus = new EventBus();
+    const workers = [
+      makeWorkerWithTier('agent-a', 'Agent A', 'medium', 'claude-sonnet'),
+      makeWorkerWithTier('agent-b', 'Agent B', 'medium', 'claude-sonnet'),
+    ];
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+    const handler = new DeliberationHandler(bus, workers, minConfig, sendFn);
+
+    const store = handler.getBlindReviewStore();
+    const threadId = 100;
+
+    const message: CouncilMessage = {
+      id: 'msg-normal-1',
+      role: 'human',
+      content: 'Regular question',
+      timestamp: Date.now(),
+      threadId,
+    };
+
+    const done = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', () => resolve());
+    });
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId,
+      message,
+    });
+
+    await done;
+
+    // No blind-review session was created, so store returns null
+    expect(store.getLatestTurnFor(threadId, 'agent-a')).toBeNull();
+    expect(store.getLatestTurnFor(threadId, 'agent-b')).toBeNull();
   });
 });
