@@ -7,6 +7,15 @@ import type {
   BlindReviewEventInput,
 } from '../types.js';
 
+interface SessionRow {
+  session_id: string;
+  thread_id: number;
+  topic: string | null;
+  agent_ids: string;
+  started_at: string;
+  revealed_at: string | null;
+}
+
 interface EventRow {
   event_id: number;
   session_id: string;
@@ -27,6 +36,30 @@ export interface BlindReviewEventRecord {
   score: number;
   feedbackText: string | null;
   scoredAt: string;
+}
+
+function sessionRowToRecord(row: SessionRow): BlindReviewSessionRow {
+  return {
+    sessionId: row.session_id,
+    threadId: row.thread_id,
+    topic: row.topic,
+    agentIds: JSON.parse(row.agent_ids) as string[],
+    startedAt: row.started_at,
+    revealedAt: row.revealed_at,
+  };
+}
+
+function eventRowToRecord(row: EventRow): BlindReviewEventRecord {
+  return {
+    eventId: row.event_id,
+    sessionId: row.session_id,
+    agentId: row.agent_id,
+    tier: row.tier as AgentTier,
+    model: row.model,
+    score: row.score,
+    feedbackText: row.feedback_text,
+    scoredAt: row.scored_at,
+  };
 }
 
 export class BlindReviewDB {
@@ -100,19 +133,8 @@ export class BlindReviewDB {
   getSession(sessionId: string): BlindReviewSessionRow | null {
     const row = this.db.prepare(
       `SELECT * FROM blind_review_sessions WHERE session_id = ?`
-    ).get(sessionId) as {
-      session_id: string; thread_id: number; topic: string | null;
-      agent_ids: string; started_at: string; revealed_at: string | null;
-    } | undefined;
-    if (!row) return null;
-    return {
-      sessionId: row.session_id,
-      threadId: row.thread_id,
-      topic: row.topic,
-      agentIds: JSON.parse(row.agent_ids) as string[],
-      startedAt: row.started_at,
-      revealedAt: row.revealed_at,
-    };
+    ).get(sessionId) as SessionRow | undefined;
+    return row ? sessionRowToRecord(row) : null;
   }
 
   recordScore(input: BlindReviewEventInput): void {
@@ -135,16 +157,7 @@ export class BlindReviewDB {
     const rows = this.db.prepare(
       `SELECT * FROM blind_review_events WHERE session_id = ? ORDER BY event_id ASC`
     ).all(sessionId) as EventRow[];
-    return rows.map((r) => ({
-      eventId: r.event_id,
-      sessionId: r.session_id,
-      agentId: r.agent_id,
-      tier: r.tier as AgentTier,
-      model: r.model,
-      score: r.score,
-      feedbackText: r.feedback_text,
-      scoredAt: r.scored_at,
-    }));
+    return rows.map(eventRowToRecord);
   }
 
   listTables(): string[] {
