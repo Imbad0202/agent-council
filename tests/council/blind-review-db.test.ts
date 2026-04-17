@@ -226,6 +226,22 @@ describe('buildRecommendation', () => {
     }, { lowerTierModel: 'haiku', currentModel: 'sonnet' }))
       .toBe('維持現配置（初期樣本，建議再觀察幾場）');
   });
+
+  it('n=0: 尚無資料', () => {
+    expect(buildRecommendation({
+      agentId: 'x', tier: 'high', sampleCount: 0, avgScore: 0,
+      last5Scores: [], updatedAt: '2026-04-17',
+    }, { lowerTierModel: null, currentModel: 'opus' }))
+      .toBe('尚無資料');
+  });
+
+  it('n>=5 avg 2-3 tier=high with null lowerTierModel falls back to "low tier"', () => {
+    expect(buildRecommendation({
+      agentId: 'huahua', tier: 'high', sampleCount: 6, avgScore: 2.5,
+      last5Scores: [2, 3, 2, 3, 3], updatedAt: '2026-04-17',
+    }, { lowerTierModel: null, currentModel: 'opus' }))
+      .toBe('考慮將 huahua 在 high complexity 的 tier 從 opus 降到 low tier');
+  });
 });
 
 describe('renderSparkline', () => {
