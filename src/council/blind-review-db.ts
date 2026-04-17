@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type {
   AgentTier,
+  AgentTierStats,
   BlindReviewSessionRow,
   BlindReviewEventInput,
 } from '../types.js';
@@ -25,6 +26,26 @@ interface EventRow {
   score: number;
   feedback_text: string | null;
   scored_at: string;
+}
+
+interface StatsRow {
+  agent_id: string;
+  tier: string;
+  sample_count: number;
+  avg_score: number;
+  last_5_scores: string;
+  updated_at: string;
+}
+
+function statsRowToRecord(row: StatsRow): AgentTierStats {
+  return {
+    agentId: row.agent_id,
+    tier: row.tier as AgentTier,
+    sampleCount: row.sample_count,
+    avgScore: row.avg_score,
+    last5Scores: JSON.parse(row.last_5_scores) as number[],
+    updatedAt: row.updated_at,
+  };
 }
 
 export interface BlindReviewEventRecord {
@@ -158,6 +179,58 @@ export class BlindReviewDB {
       `SELECT * FROM blind_review_events WHERE session_id = ? ORDER BY event_id ASC`
     ).all(sessionId) as EventRow[];
     return rows.map(eventRowToRecord);
+  }
+
+  refreshStats(agentId: string, tier: AgentTier): void {
+    if (tier === 'unknown') {
+      this.db.prepare(
+        `DELETE FROM blind_review_stats WHERE agent_id = ? AND tier = ?`
+      ).run(agentId, tier);
+      return;
+    }
+    const rows = this.db.prepare(
+      `SELECT score FROM blind_review_events
+         WHERE agent_id = ? AND tier = ?
+         ORDER BY event_id ASC`
+    ).all(agentId, tier) as { score: number }[];
+    if (rows.length === 0) {
+      this.db.prepare(
+        `DELETE FROM blind_review_stats WHERE agent_id = ? AND tier = ?`
+      ).run(agentId, tier);
+      return;
+    }
+    const scores = rows.map((r) => r.score);
+    const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const last5 = scores.slice(-5);
+    this.db.prepare(
+      `INSERT OR REPLACE INTO blind_review_stats
+         (agent_id, tier, sample_count, avg_score, last_5_scores, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      agentId,
+      tier,
+      scores.length,
+      avg,
+      JSON.stringify(last5),
+      new Date().toISOString(),
+    );
+  }
+
+  getStats(agentId: string, tier: AgentTier): AgentTierStats {
+    const row = this.db.prepare(
+      `SELECT * FROM blind_review_stats WHERE agent_id = ? AND tier = ?`
+    ).get(agentId, tier) as StatsRow | undefined;
+    if (!row) {
+      return {
+        agentId,
+        tier,
+        sampleCount: 0,
+        avgScore: 0,
+        last5Scores: [],
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    return statsRowToRecord(row);
   }
 
   listTables(): string[] {

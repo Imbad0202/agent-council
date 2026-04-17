@@ -77,3 +77,53 @@ describe('BlindReviewDB writes', () => {
     expect(db.getEventsForSession('s1')[0].feedbackText).toBe('good');
   });
 });
+
+describe('BlindReviewDB stats', () => {
+  function seed(db: BlindReviewDB, agentId: string, tier: AgentTier, scores: number[]) {
+    const sid = `s-${Date.now()}-${Math.random()}`;
+    db.recordSession({ sessionId: sid, threadId: 1, topic: null, agentIds: [agentId], startedAt: 'now', revealedAt: null });
+    for (const s of scores) {
+      db.recordScore({ sessionId: sid, agentId, tier, model: 'm', score: s });
+    }
+    db.refreshStats(agentId, tier);
+  }
+
+  it('getStats returns zero stats when no events', () => {
+    const db = new BlindReviewDB(':memory:');
+    expect(db.getStats('nobody', 'high')).toMatchObject({
+      agentId: 'nobody',
+      tier: 'high',
+      sampleCount: 0,
+      avgScore: 0,
+      last5Scores: [],
+    });
+  });
+
+  it('refreshStats aggregates events for (agent, tier)', () => {
+    const db = new BlindReviewDB(':memory:');
+    seed(db, 'a1', 'high', [5, 4, 3]);
+    const stats = db.getStats('a1', 'high');
+    expect(stats.sampleCount).toBe(3);
+    expect(stats.avgScore).toBeCloseTo(4.0, 5);
+    expect(stats.last5Scores).toEqual([5, 4, 3]);
+  });
+
+  it('last5Scores keeps only the most recent 5 in insertion order', () => {
+    const db = new BlindReviewDB(':memory:');
+    seed(db, 'a1', 'low', [1, 2, 3, 4, 5, 6, 7]);
+    const stats = db.getStats('a1', 'low');
+    expect(stats.last5Scores).toEqual([3, 4, 5, 6, 7]);
+    expect(stats.sampleCount).toBe(7);
+  });
+
+  it('refreshStats skips events where tier is unknown', () => {
+    const db = new BlindReviewDB(':memory:');
+    db.recordSession({ sessionId: 's1', threadId: 1, topic: null, agentIds: ['a'], startedAt: 'now', revealedAt: null });
+    db.recordScore({ sessionId: 's1', agentId: 'a', tier: 'unknown', model: 'm', score: 5 });
+    db.recordScore({ sessionId: 's1', agentId: 'a', tier: 'high', model: 'm', score: 3 });
+    db.refreshStats('a', 'high');
+    db.refreshStats('a', 'unknown');
+    expect(db.getStats('a', 'unknown').sampleCount).toBe(0);
+    expect(db.getStats('a', 'high').sampleCount).toBe(1);
+  });
+});
