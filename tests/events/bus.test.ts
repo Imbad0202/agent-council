@@ -266,6 +266,17 @@ describe('EventBus', () => {
     });
   });
 
+  describe('EventMap blind-review.persist-failed', () => {
+    it('has persist-failed event shape', () => {
+      const evt: EventMap['blind-review.persist-failed'] = {
+        threadId: 1,
+        sessionId: 's1',
+        error: new Error('disk full'),
+      };
+      expect(evt.error).toBeInstanceOf(Error);
+    });
+  });
+
   describe('max listeners', () => {
     it('does not warn when adding up to 50 listeners', () => {
       const bus = new EventBus();

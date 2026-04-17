@@ -30,6 +30,7 @@ export interface EventMap {
   'blind-review.started': { threadId: number; codes: string[] };
   'blind-review.scored': { threadId: number; code: string; score: number; allScored: boolean };
   'blind-review.revealed': { threadId: number };
+  'blind-review.persist-failed': { threadId: number; sessionId: string; error: Error };
 }
 
 export class EventBus {
