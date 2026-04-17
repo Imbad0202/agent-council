@@ -2,6 +2,36 @@ export type AgentRole = 'advocate' | 'critic' | 'analyst' | 'synthesizer' | 'aut
 
 export type IntentType = 'deliberation' | 'quick-answer' | 'implementation' | 'investigation' | 'meta';
 export type Complexity = 'low' | 'medium' | 'high';
+
+export type AgentTier = Complexity | 'unknown';
+
+export interface BlindReviewSessionRow {
+  sessionId: string;
+  threadId: number;
+  topic: string | null;
+  agentIds: string[];
+  startedAt: string;
+  revealedAt: string | null;
+}
+
+export interface BlindReviewEventInput {
+  sessionId: string;
+  agentId: string;
+  tier: AgentTier;
+  model: string;
+  score: number;
+  feedbackText?: string;
+}
+
+export interface AgentTierStats {
+  agentId: string;
+  tier: AgentTier;
+  sampleCount: number;
+  avgScore: number;
+  last5Scores: number[];
+  updatedAt: string;
+}
+
 export type FacilitatorAction = 'steer' | 'challenge' | 'summarize' | 'escalate' | 'structure' | 'end';
 export type DebateStructure = 'free' | 'structured' | 'round-robin';
 export type ResponseClassification = 'opposition' | 'conditional' | 'agreement';
