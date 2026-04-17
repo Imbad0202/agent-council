@@ -1,4 +1,14 @@
-export type AgentRole = 'advocate' | 'critic' | 'analyst' | 'synthesizer' | 'author' | 'reviewer' | 'sneaky-prover';
+export type AgentRole =
+  | 'advocate'
+  | 'critic'
+  | 'analyst'
+  | 'synthesizer'
+  | 'author'
+  | 'reviewer'
+  | 'sneaky-prover'
+  | 'biased-prover'
+  | 'deceptive-prover'
+  | 'calibrated-prover';
 
 export type IntentType = 'deliberation' | 'quick-answer' | 'implementation' | 'investigation' | 'meta';
 export type Complexity = 'low' | 'medium' | 'high';
@@ -51,6 +61,7 @@ export interface CouncilMessage {
   };
   stressTest?: boolean;
   blindReview?: boolean;
+  adversarialMode?: import('./council/adversarial-provers.js').AdversarialMode;
 }
 
 export interface AgentConfig {

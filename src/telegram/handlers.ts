@@ -1,4 +1,5 @@
 import type { CouncilMessage } from '../types.js';
+import type { AdversarialMode } from '../council/adversarial-provers.js';
 
 interface TelegramMessage {
   message_id: number;
@@ -10,7 +11,11 @@ interface TelegramMessage {
 
 export function createCouncilMessageFromTelegram(
   msg: TelegramMessage,
-  options?: { stressTest?: boolean; blindReview?: boolean },
+  options?: {
+    stressTest?: boolean;
+    blindReview?: boolean;
+    adversarialMode?: AdversarialMode;
+  },
 ): CouncilMessage {
   return {
     id: `tg-${msg.message_id}`,
@@ -20,6 +25,7 @@ export function createCouncilMessageFromTelegram(
     threadId: msg.message_thread_id,
     ...(options?.stressTest ? { stressTest: true } : {}),
     ...(options?.blindReview ? { blindReview: true } : {}),
+    ...(options?.adversarialMode ? { adversarialMode: options.adversarialMode } : {}),
   };
 }
 

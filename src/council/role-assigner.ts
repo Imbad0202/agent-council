@@ -1,12 +1,18 @@
 import type { AgentRole, CouncilConfig, PatternRecord } from '../types.js';
 import { detectBestTopic } from './topics.js';
 
+const ADVERSARIAL_ROLES: AgentRole[] = [
+  'biased-prover',
+  'deceptive-prover',
+  'calibrated-prover',
+];
+
 export function assignRoles(
   agentIds: string[],
   message: string,
   config: CouncilConfig,
   patterns?: PatternRecord[],
-  options?: { allowSneaky?: boolean },
+  options?: { allowSneaky?: boolean; allowAdversarial?: boolean },
 ): Record<string, AgentRole> {
   const topic = detectBestTopic(message);
   let roleList: AgentRole[];
@@ -21,6 +27,14 @@ export function assignRoles(
     throw new Error(
       'sneaky-prover role assigned but allowSneaky=false — this role is opt-in via /stresstest only',
     );
+  }
+
+  for (const role of ADVERSARIAL_ROLES) {
+    if (roleList.includes(role) && options?.allowAdversarial !== true) {
+      throw new Error(
+        `${role} role assigned but allowAdversarial=false — PVG adversarial roles are opt-in only`,
+      );
+    }
   }
 
   while (roleList.length < agentIds.length) {

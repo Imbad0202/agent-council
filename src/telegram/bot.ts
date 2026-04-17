@@ -4,6 +4,7 @@ import type { AgentConfig, CouncilMessage } from '../types.js';
 import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
 import type { BlindReviewDB } from '../council/blind-review-db.js';
 import type { EventBus } from '../events/bus.js';
+import type { AdversarialMode } from '../council/adversarial-provers.js';
 
 export interface BlindReviewWiring {
   store: BlindReviewStore;
@@ -14,7 +15,10 @@ export interface BlindReviewWiring {
   modelConfigForAgent?: (agentId: string) => { low: string; medium: string; high: string } | null;
 }
 
-type CommandFlag = { stressTest: true } | { blindReview: true };
+type CommandFlag =
+  | { stressTest: true }
+  | { blindReview: true }
+  | { adversarialMode: AdversarialMode };
 
 function buildCommandHandler(
   groupChatId: number,
@@ -45,6 +49,25 @@ export function buildStressTestHandler(
     'Usage: /stresstest <your question>\nOne agent will play sneaky-prover (planted plausible error) so you can practice spotting it.',
     handler,
     { stressTest: true },
+  );
+}
+
+const PVG_MODE_DESCRIPTIONS: Record<AdversarialMode, string> = {
+  biased: 'one agent will play biased-prover (cognitive-bias framing)',
+  deceptive: 'one agent will play deceptive-prover (conclusion/evidence mismatch)',
+  calibrated: 'one agent will play calibrated-prover (declared confidence + unknown)',
+};
+
+export function buildPvgTestHandler(
+  groupChatId: number,
+  handler: { handleHumanMessage: (msg: CouncilMessage) => void },
+  mode: AdversarialMode,
+) {
+  return buildCommandHandler(
+    groupChatId,
+    `Usage: /pvg${mode} <your question>\n${PVG_MODE_DESCRIPTIONS[mode]}.`,
+    handler,
+    { adversarialMode: mode },
   );
 }
 
@@ -156,6 +179,9 @@ export class BotManager {
     }
 
     listenerBot.command('stresstest', buildStressTestHandler(this.groupChatId, handler));
+    listenerBot.command('pvgbiased', buildPvgTestHandler(this.groupChatId, handler, 'biased'));
+    listenerBot.command('pvgdeceptive', buildPvgTestHandler(this.groupChatId, handler, 'deceptive'));
+    listenerBot.command('pvgcalibrated', buildPvgTestHandler(this.groupChatId, handler, 'calibrated'));
 
     listenerBot.on('message:text', async (ctx) => {
       if (ctx.chat.id !== this.groupChatId) return;

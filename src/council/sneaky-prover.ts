@@ -9,7 +9,15 @@
  */
 
 export const SNEAKY_TRAILER_PREFIX = '<<<SNEAKY-PROVER:';
-const TRAILER_REGEX = new RegExp(`^${SNEAKY_TRAILER_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([a-z-]+)\\|([^>]+)>>>\\s*$`, 'm');
+
+export function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const TRAILER_REGEX = new RegExp(
+  `^${escapeRegex(SNEAKY_TRAILER_PREFIX)}([a-z-]+)\\|([^>]+)>>>\\s*$`,
+  'm',
+);
 
 export interface ParsedTrailer {
   kind: string;
