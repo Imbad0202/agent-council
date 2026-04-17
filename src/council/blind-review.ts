@@ -9,6 +9,9 @@
 
 import { InlineKeyboard } from 'grammy';
 import type { AgentTier } from '../types.js';
+import type { BlindReviewDB } from './blind-review-db.js';
+
+type PersistFailedHandler = (evt: { threadId: number; sessionId: string; error: Error }) => void;
 
 export interface TurnRecord {
   agentId: string;
@@ -57,6 +60,8 @@ export function assignCodes(agentIds: string[]): Map<string, string> {
  */
 export class BlindReviewStore {
   private sessions = new Map<number, BlindReviewSession>();
+  private db: BlindReviewDB | null = null;
+  private persistFailedHandlers: PersistFailedHandler[] = [];
 
   create(
     threadId: number,
@@ -96,9 +101,58 @@ export class BlindReviewStore {
     return { allScored };
   }
 
+  attachDB(db: BlindReviewDB): void {
+    this.db = db;
+  }
+
+  onPersistFailed(handler: PersistFailedHandler): void {
+    this.persistFailedHandlers.push(handler);
+  }
+
   markRevealed(threadId: number): void {
     const session = this.sessions.get(threadId);
-    if (session) session.revealed = true;
+    if (!session) return;
+    session.revealed = true;
+    if (!this.db) return;
+
+    const sessionId = `${threadId}:${session.startedAt}`;
+    const now = new Date().toISOString();
+    const startedAtIso = new Date(session.startedAt).toISOString();
+
+    const scores: Array<{
+      sessionId: string; agentId: string; tier: AgentTier; model: string; score: number;
+    }> = [];
+    for (const [code, score] of session.scores.entries()) {
+      const agentId = session.codeToAgentId.get(code);
+      if (!agentId) continue;
+      const latest = this.getLatestTurnFor(threadId, agentId);
+      scores.push({
+        sessionId,
+        agentId,
+        tier: latest?.tier ?? 'unknown',
+        model: latest?.model ?? 'unknown',
+        score,
+      });
+    }
+
+    try {
+      this.db.persistSession({
+        sessionRow: {
+          sessionId,
+          threadId,
+          topic: null,
+          agentIds: [...session.codeToAgentId.values()],
+          startedAt: startedAtIso,
+          revealedAt: now,
+        },
+        scores,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      for (const h of this.persistFailedHandlers) {
+        h({ threadId, sessionId, error: err });
+      }
+    }
   }
 
   delete(threadId: number): void {

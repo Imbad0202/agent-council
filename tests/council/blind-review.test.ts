@@ -6,6 +6,7 @@ import {
   formatRevealMessage,
   type BlindReviewSession,
 } from '../../src/council/blind-review.js';
+import { BlindReviewDB } from '../../src/council/blind-review-db.js';
 
 
 describe('blind-review module', () => {
@@ -126,5 +127,42 @@ describe('BlindReviewStore tier tracking', () => {
     store.recordTurn(2, 'a', 'medium', 'sonnet');
     store.recordTurn(2, 'a', 'high', 'opus');
     expect(store.getLatestTurnFor(2, 'a')).toEqual({ tier: 'high', model: 'opus' });
+  });
+});
+
+describe('BlindReviewStore.markRevealed persistence', () => {
+  it('persists session + scores to BlindReviewDB on reveal', () => {
+    const db = new BlindReviewDB(':memory:');
+    const store = new BlindReviewStore();
+    store.attachDB(db);
+    const session = store.create(1, ['a', 'b'], new Map([['a', 'advocate'], ['b', 'critic']]));
+    if ('error' in session) throw new Error(session.error);
+    store.recordTurn(1, 'a', 'high', 'opus');
+    store.recordTurn(1, 'b', 'low', 'haiku');
+    const codes = [...session.codeToAgentId.keys()];
+    store.recordScore(1, codes[0], 5);
+    store.recordScore(1, codes[1], 2);
+    store.markRevealed(1);
+
+    const sid = db.getRecentSessionId()!;
+    expect(db.getEventsForSession(sid)).toHaveLength(2);
+  });
+
+  it('does not throw if DB flush fails; emits persist-failed event', () => {
+    const failingDB = {
+      persistSession: () => { throw new Error('disk full'); },
+    } as unknown as BlindReviewDB;
+    const emitted: Array<{ threadId: number; sessionId: string; error: Error }> = [];
+    const store = new BlindReviewStore();
+    store.attachDB(failingDB);
+    store.onPersistFailed((evt) => emitted.push(evt));
+    const session = store.create(9, ['a'], new Map([['a', 'advocate']]));
+    if ('error' in session) throw new Error(session.error);
+    store.recordTurn(9, 'a', 'high', 'opus');
+    const code = [...session.codeToAgentId.keys()][0];
+    store.recordScore(9, code, 3);
+    expect(() => store.markRevealed(9)).not.toThrow();
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].threadId).toBe(9);
   });
 });

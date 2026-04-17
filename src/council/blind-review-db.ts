@@ -259,6 +259,13 @@ export class BlindReviewDB {
     );
   }
 
+  getRecentSessionId(): string | null {
+    const row = this.db.prepare(
+      `SELECT session_id FROM blind_review_sessions ORDER BY started_at DESC LIMIT 1`
+    ).get() as { session_id: string } | undefined;
+    return row?.session_id ?? null;
+  }
+
   getStats(agentId: string, tier: AgentTier): AgentTierStats {
     const row = this.db.prepare(
       `SELECT * FROM blind_review_stats WHERE agent_id = ? AND tier = ?`
