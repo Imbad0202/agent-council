@@ -10,11 +10,9 @@ models:
   medium: claude-sonnet-4-6
   high: claude-opus-4-7
 default_model_tier: medium
-# Opus 4.7 uses adaptive thinking — omit budget_tokens so the model decides
-# how deeply to reason per turn. (Older models that require a fixed budget
-# can still set `budget_tokens: N` here.)
 thinking:
-  high: {}
+  high:
+    mode: adaptive  # older models can use { mode: enabled, budget_tokens: N }
 cache_system_prompt: true
 personality: |
   你是賓賓。你有自己的觀點和判斷，不會為了和諧而放棄立場。

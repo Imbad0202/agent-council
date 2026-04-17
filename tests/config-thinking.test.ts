@@ -12,7 +12,7 @@ describe('loadAgentConfig — thinking', () => {
     mkdirSync(join(testDir, 'agents'), { recursive: true });
   });
 
-  it('parses thinking tier config from YAML', () => {
+  it('parses enabled-mode thinking tier from YAML', () => {
     const yaml = `
 id: binbin
 name: 賓賓
@@ -23,11 +23,30 @@ personality: |
   You are 賓賓.
 thinking:
   high:
+    mode: enabled
     budget_tokens: 32000
 `;
     writeFileSync(join(testDir, 'agents', 'binbin.yaml'), yaml);
     const config = loadAgentConfig(join(testDir, 'agents', 'binbin.yaml'));
-    expect(config.thinking?.high).toEqual({ budget_tokens: 32000 });
+    expect(config.thinking?.high).toEqual({ mode: 'enabled', budget_tokens: 32000 });
+  });
+
+  it('parses adaptive-mode thinking tier from YAML', () => {
+    const yaml = `
+id: binbin
+name: 賓賓
+provider: claude
+model: claude-opus-4-7
+memory_dir: 賓賓/global
+personality: |
+  You are 賓賓.
+thinking:
+  high:
+    mode: adaptive
+`;
+    writeFileSync(join(testDir, 'agents', 'binbin-adaptive.yaml'), yaml);
+    const config = loadAgentConfig(join(testDir, 'agents', 'binbin-adaptive.yaml'));
+    expect(config.thinking?.high).toEqual({ mode: 'adaptive' });
   });
 
   it('omits thinking field when not in YAML', () => {
@@ -56,13 +75,14 @@ personality: |
   Multi.
 thinking:
   medium:
+    mode: enabled
     budget_tokens: 8000
   high:
-    budget_tokens: 32000
+    mode: adaptive
 `;
     writeFileSync(join(testDir, 'agents', 'multi.yaml'), yaml);
     const config = loadAgentConfig(join(testDir, 'agents', 'multi.yaml'));
-    expect(config.thinking?.medium).toEqual({ budget_tokens: 8000 });
-    expect(config.thinking?.high).toEqual({ budget_tokens: 32000 });
+    expect(config.thinking?.medium).toEqual({ mode: 'enabled', budget_tokens: 8000 });
+    expect(config.thinking?.high).toEqual({ mode: 'adaptive' });
   });
 });

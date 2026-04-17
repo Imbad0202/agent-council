@@ -13,12 +13,15 @@ export function loadAgentConfig(filePath: string): AgentConfig {
 
   if (parsed.thinking) {
     for (const [tier, cfg] of Object.entries(parsed.thinking)) {
-      const budget = (cfg as { budget_tokens?: unknown })?.budget_tokens;
-      // Opus 4.7+ uses adaptive thinking — omit budget_tokens to let the model decide.
-      // Older models that still use fixed-budget thinking must pass a finite number.
-      if (budget !== undefined && (typeof budget !== 'number' || !Number.isFinite(budget))) {
-        throw new Error(`Invalid agent config at ${filePath}: thinking.${tier}.budget_tokens must be a finite number when set, got ${JSON.stringify(budget)}`);
+      const entry = cfg as { mode?: unknown; budget_tokens?: unknown };
+      if (entry?.mode === 'adaptive') continue;
+      if (entry?.mode === 'enabled') {
+        if (typeof entry.budget_tokens !== 'number' || !Number.isFinite(entry.budget_tokens)) {
+          throw new Error(`Invalid agent config at ${filePath}: thinking.${tier}.budget_tokens must be a finite number when mode=enabled, got ${JSON.stringify(entry.budget_tokens)}`);
+        }
+        continue;
       }
+      throw new Error(`Invalid agent config at ${filePath}: thinking.${tier}.mode must be 'adaptive' or 'enabled', got ${JSON.stringify(entry?.mode)}`);
     }
   }
 

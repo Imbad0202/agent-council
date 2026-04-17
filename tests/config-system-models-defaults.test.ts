@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { loadCouncilConfig } from '../src/config.js';
+import { DEFAULT_SYSTEM_MODEL } from '../src/constants.js';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -27,15 +28,15 @@ describe('loadCouncilConfig — systemModels defaults', () => {
     mkdirSync(testDir, { recursive: true });
   });
 
-  it('sets sonnet-4-6 defaults for both fields when system_models block is absent', () => {
+  it('applies DEFAULT_SYSTEM_MODEL to both fields when system_models block is absent', () => {
     writeFileSync(join(testDir, 'council.yaml'), MINIMAL_BASE);
     const config = loadCouncilConfig(join(testDir, 'council.yaml'));
     expect(config.systemModels).toBeDefined();
-    expect(config.systemModels!.intentClassification).toBe('claude-sonnet-4-6');
-    expect(config.systemModels!.taskDecomposition).toBe('claude-sonnet-4-6');
+    expect(config.systemModels!.intentClassification).toBe(DEFAULT_SYSTEM_MODEL);
+    expect(config.systemModels!.taskDecomposition).toBe(DEFAULT_SYSTEM_MODEL);
   });
 
-  it('fills missing individual fields with sonnet-4-6 default', () => {
+  it('fills missing individual fields with DEFAULT_SYSTEM_MODEL', () => {
     const yaml = MINIMAL_BASE + `
 system_models:
   intent_classification: claude-sonnet-4-6
@@ -43,7 +44,7 @@ system_models:
     writeFileSync(join(testDir, 'council.yaml'), yaml);
     const config = loadCouncilConfig(join(testDir, 'council.yaml'));
     expect(config.systemModels!.intentClassification).toBe('claude-sonnet-4-6');
-    expect(config.systemModels!.taskDecomposition).toBe('claude-sonnet-4-6');
+    expect(config.systemModels!.taskDecomposition).toBe(DEFAULT_SYSTEM_MODEL);
   });
 
   it('honors both fields when set', () => {

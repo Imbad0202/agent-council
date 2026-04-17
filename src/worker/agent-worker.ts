@@ -48,11 +48,7 @@ export class AgentWorker {
     if (!complexity || !this.config.thinking) return undefined;
     const tier = this.config.thinking[complexity];
     if (!tier) return undefined;
-    // Opus 4.7+: when budget_tokens is omitted, use adaptive thinking.
-    // Older models: keep the fixed-budget enabled mode.
-    if (tier.budget_tokens === undefined) {
-      return { type: 'adaptive' };
-    }
+    if (tier.mode === 'adaptive') return { type: 'adaptive' };
     return { type: 'enabled', budget_tokens: tier.budget_tokens };
   }
 
