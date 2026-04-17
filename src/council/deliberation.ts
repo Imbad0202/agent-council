@@ -208,6 +208,16 @@ export class DeliberationHandler {
         complexity,
       );
 
+      // Tag turn into blind-review session if active
+      if (blindReviewMode) {
+        this.blindReviewStore.recordTurn(
+          threadId,
+          worker.id,
+          response.tierUsed ?? 'unknown',
+          response.modelUsed ?? 'unknown',
+        );
+      }
+
       // Strip sneaky-prover trailer before any broadcast or storage
       let storedContent = response.content;
       if (role === 'sneaky-prover') {
