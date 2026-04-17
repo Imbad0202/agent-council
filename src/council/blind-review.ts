@@ -8,6 +8,13 @@
  */
 
 import { InlineKeyboard } from 'grammy';
+import type { AgentTier } from '../types.js';
+
+export interface TurnRecord {
+  agentId: string;
+  tier: AgentTier;
+  model: string;
+}
 
 export interface BlindReviewSession {
   threadId: number;
@@ -15,6 +22,8 @@ export interface BlindReviewSession {
   codeToAgentId: Map<string, string>;
   agentIdToRole: Map<string, string>;
   scores: Map<string, number>;
+  feedbackText: Map<string, string>;
+  turnLog: TurnRecord[];
   revealed: boolean;
 }
 
@@ -65,6 +74,8 @@ export class BlindReviewStore {
       codeToAgentId,
       agentIdToRole: new Map(roles),
       scores: new Map(),
+      feedbackText: new Map(),
+      turnLog: [],
       revealed: false,
     };
     this.sessions.set(threadId, session);
@@ -92,6 +103,19 @@ export class BlindReviewStore {
 
   delete(threadId: number): void {
     this.sessions.delete(threadId);
+  }
+
+  recordTurn(threadId: number, agentId: string, tier: AgentTier, model: string): void {
+    const session = this.sessions.get(threadId);
+    if (!session || session.revealed) return;
+    session.turnLog.push({ agentId, tier, model });
+  }
+
+  getLatestTurnFor(threadId: number, agentId: string): { tier: AgentTier; model: string } | null {
+    const session = this.sessions.get(threadId);
+    if (!session) return null;
+    const record = [...session.turnLog].reverse().find((t) => t.agentId === agentId);
+    return record ? { tier: record.tier, model: record.model } : null;
   }
 }
 

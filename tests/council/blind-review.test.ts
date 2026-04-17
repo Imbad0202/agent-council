@@ -7,6 +7,7 @@ import {
   type BlindReviewSession,
 } from '../../src/council/blind-review.js';
 
+
 describe('blind-review module', () => {
   it('assignCodes is deterministic and sorted by agentId', () => {
     const result = assignCodes(['zeta-bot', 'alpha-bot']);
@@ -67,6 +68,8 @@ describe('blind-review module', () => {
       codeToAgentId: new Map([['Agent-A', 'a-id']]),
       agentIdToRole: new Map([['a-id', 'critic']]),  // real per-round role
       scores: new Map([['Agent-A', 4]]),
+      feedbackText: new Map(),
+      turnLog: [],
       revealed: false,
     };
     const meta = new Map([
@@ -84,6 +87,8 @@ describe('blind-review module', () => {
       codeToAgentId: new Map([['Agent-A', 'a-id'], ['Agent-B', 'b-id']]),
       agentIdToRole: new Map([['a-id', 'critic'], ['b-id', 'advocate']]),
       scores: new Map([['Agent-A', 4], ['Agent-B', 5]]),
+      feedbackText: new Map(),
+      turnLog: [],
       revealed: false,
     };
     const meta = new Map([
@@ -98,5 +103,28 @@ describe('blind-review module', () => {
     expect(msg).toContain('Agent-B');
     expect(msg).toContain('GPT');
     expect(msg).toContain('5');
+  });
+});
+
+describe('BlindReviewStore tier tracking', () => {
+  it('recordTurn stores (agentId, tier, model) per turn', () => {
+    const store = new BlindReviewStore();
+    const session = store.create(1, ['a', 'b'], new Map([['a', 'advocate'], ['b', 'critic']]));
+    if ('error' in session) throw new Error(session.error);
+    store.recordTurn(1, 'a', 'high', 'opus');
+    store.recordTurn(1, 'b', 'low', 'haiku');
+    const s = store.get(1)!;
+    expect(s.turnLog).toEqual([
+      { agentId: 'a', tier: 'high', model: 'opus' },
+      { agentId: 'b', tier: 'low', model: 'haiku' },
+    ]);
+  });
+
+  it('getLatestTurnFor returns the most recent (tier, model) for an agent', () => {
+    const store = new BlindReviewStore();
+    store.create(2, ['a'], new Map([['a', 'advocate']]));
+    store.recordTurn(2, 'a', 'medium', 'sonnet');
+    store.recordTurn(2, 'a', 'high', 'opus');
+    expect(store.getLatestTurnFor(2, 'a')).toEqual({ tier: 'high', model: 'opus' });
   });
 });
