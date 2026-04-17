@@ -233,6 +233,27 @@ export class BlindReviewDB {
     return statsRowToRecord(row);
   }
 
+  persistSession(input: {
+    sessionRow: BlindReviewSessionRow;
+    scores: BlindReviewEventInput[];
+  }): void {
+    const tx = this.db.transaction((arg: typeof input) => {
+      this.recordSession(arg.sessionRow);
+      for (const score of arg.scores) {
+        this.recordScore(score);
+      }
+      const touched = new Set<string>();
+      for (const s of arg.scores) {
+        touched.add(`${s.agentId}::${s.tier}`);
+      }
+      for (const key of touched) {
+        const [agentId, tier] = key.split('::');
+        this.refreshStats(agentId, tier as AgentTier);
+      }
+    });
+    tx(input);
+  }
+
   listTables(): string[] {
     return (this.db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")

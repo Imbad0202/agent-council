@@ -127,3 +127,35 @@ describe('BlindReviewDB stats', () => {
     expect(db.getStats('a', 'high').sampleCount).toBe(1);
   });
 });
+
+describe('BlindReviewDB persistSession', () => {
+  it('writes session + events + stats atomically', () => {
+    const db = new BlindReviewDB(':memory:');
+    db.persistSession({
+      sessionRow: {
+        sessionId: 's1', threadId: 1, topic: 'monorepo',
+        agentIds: ['a1', 'a2'], startedAt: 'now', revealedAt: 'now',
+      },
+      scores: [
+        { sessionId: 's1', agentId: 'a1', tier: 'high', model: 'opus', score: 4 },
+        { sessionId: 's1', agentId: 'a2', tier: 'low', model: 'haiku', score: 2 },
+      ],
+    });
+    expect(db.getEventsForSession('s1')).toHaveLength(2);
+    expect(db.getStats('a1', 'high').sampleCount).toBe(1);
+    expect(db.getStats('a2', 'low').sampleCount).toBe(1);
+  });
+
+  it('rolls back all writes if one recordScore violates FK', () => {
+    const db = new BlindReviewDB(':memory:');
+    expect(() => db.persistSession({
+      sessionRow: { sessionId: 's2', threadId: 1, topic: null, agentIds: [], startedAt: 'now', revealedAt: 'now' },
+      scores: [
+        { sessionId: 's2', agentId: 'a1', tier: 'high', model: 'm', score: 4 },
+        { sessionId: 'NONEXISTENT', agentId: 'a1', tier: 'high', model: 'm', score: 4 },
+      ],
+    })).toThrow();
+    expect(db.getSession('s2')).toBeNull();
+    expect(db.getEventsForSession('s2')).toHaveLength(0);
+  });
+});
