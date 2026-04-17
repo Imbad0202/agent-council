@@ -21,7 +21,8 @@ export class BlindReviewDB {
         session_id TEXT PRIMARY KEY,
         thread_id INTEGER NOT NULL,
         topic TEXT,
-        agent_ids TEXT NOT NULL,
+        -- agent_ids: JSON array of agent ID strings
+        agent_ids TEXT NOT NULL DEFAULT '[]',
         started_at TEXT NOT NULL,
         revealed_at TEXT
       );
@@ -46,7 +47,8 @@ export class BlindReviewDB {
         tier TEXT NOT NULL,
         sample_count INTEGER NOT NULL,
         avg_score REAL NOT NULL,
-        last_5_scores TEXT NOT NULL,
+        -- last_5_scores: JSON array of the most recent 5 scores (chronological)
+        last_5_scores TEXT NOT NULL DEFAULT '[]',
         updated_at TEXT NOT NULL,
         PRIMARY KEY (agent_id, tier)
       );
