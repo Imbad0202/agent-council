@@ -151,6 +151,11 @@ async function main() {
       sendFn: (agentId: string, content: string, threadId?: number) => adapter.send(agentId, content, { agentName: '' }, threadId),
       agentMeta,
       bus,
+      db: blindReviewDB,
+      modelConfigForAgent: (agentId: string) => {
+        const cfg = agentConfigs.find((a) => a.id === agentId);
+        return cfg?.models ?? null;
+      },
     });
   }
 
