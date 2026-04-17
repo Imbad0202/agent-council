@@ -12,6 +12,8 @@ import { GatewayRouter } from './gateway/router.js';
 import { IntentGate } from './council/intent-gate.js';
 import { DeliberationHandler } from './council/deliberation.js';
 import { BlindReviewDB } from './council/blind-review-db.js';
+import { PvgRotateStore } from './council/pvg-rotate-store.js';
+import { PvgRotateDB } from './council/pvg-rotate-db.js';
 import { FacilitatorAgent } from './council/facilitator.js';
 import { ActiveRecall } from './memory/active-recall.js';
 import { ExecutionDispatcher } from './execution/dispatcher.js';
@@ -117,6 +119,8 @@ async function main() {
   }
 
   // Deliberation layer
+  const pvgRotateStore = new PvgRotateStore();
+  const pvgRotateDB = new PvgRotateDB(resolve('data/council.db'));
   const deliberationHandler = new DeliberationHandler(
     bus,
     peerWorkers,
@@ -127,6 +131,7 @@ async function main() {
       sendKeyboardFn: adapter.sendMessageWithKeyboard
         ? adapter.sendMessageWithKeyboard.bind(adapter)
         : undefined,
+      pvgRotateStore,
     },
   );
   console.log('DeliberationHandler initialized');
@@ -139,6 +144,16 @@ async function main() {
     bus.emit('blind-review.persist-failed', evt);
     console.error('[blind-review] persist failed:', evt);
   });
+
+  // Wire pvg-rotate callback into the listener bot
+  if (adapter.setPvgRotateWiring) {
+    adapter.setPvgRotateWiring({
+      store: pvgRotateStore,
+      db: pvgRotateDB,
+      sendFn: (agentId: string, content: string, threadId?: number) => adapter.send(agentId, content, { agentName: '' }, threadId),
+      bus,
+    });
+  }
 
   // Wire blind-review commands into the listener bot (no-op for adapters without setBlindReviewWiring)
   if (adapter.setBlindReviewWiring) {

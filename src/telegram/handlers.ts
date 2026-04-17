@@ -15,6 +15,7 @@ export function createCouncilMessageFromTelegram(
     stressTest?: boolean;
     blindReview?: boolean;
     adversarialMode?: AdversarialMode;
+    pvgRotate?: boolean;
   },
 ): CouncilMessage {
   return {
@@ -26,6 +27,7 @@ export function createCouncilMessageFromTelegram(
     ...(options?.stressTest ? { stressTest: true } : {}),
     ...(options?.blindReview ? { blindReview: true } : {}),
     ...(options?.adversarialMode ? { adversarialMode: options.adversarialMode } : {}),
+    ...(options?.pvgRotate ? { pvgRotate: true } : {}),
   };
 }
 

@@ -56,8 +56,9 @@ export class AgentWorker {
     role: AgentRole,
     challengePrompt?: string,
     complexity?: Complexity,
+    rotationMode = false,
   ): Promise<ProviderResponse> {
-    const { stable, volatile } = buildSystemPromptParts(this.config, this.memorySyncPath, role);
+    const { stable, volatile } = buildSystemPromptParts(this.config, this.memorySyncPath, role, rotationMode);
     const systemPrompt = `${stable}\n\n---\n\n${volatile}`;
     const systemPromptParts: SystemPromptPart[] | undefined = this.config.cacheSystemPrompt
       ? [{ text: `${stable}\n\n---\n\n`, cache: true }, { text: volatile }]

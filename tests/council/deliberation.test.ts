@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DeliberationHandler } from '../../src/council/deliberation.js';
 import { EventBus } from '../../src/events/bus.js';
 import type { EventMap } from '../../src/events/bus.js';

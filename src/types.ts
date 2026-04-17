@@ -62,6 +62,7 @@ export interface CouncilMessage {
   stressTest?: boolean;
   blindReview?: boolean;
   adversarialMode?: import('./council/adversarial-provers.js').AdversarialMode;
+  pvgRotate?: boolean;
 }
 
 export interface AgentConfig {

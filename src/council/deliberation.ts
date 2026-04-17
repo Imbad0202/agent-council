@@ -21,6 +21,9 @@ import {
   type AdversarialDebriefRecord,
 } from './adversarial-provers.js';
 import { BlindReviewStore, buildScoringKeyboard } from './blind-review.js';
+import { pickRandomAdversarialRole, buildRotationKeyboard } from './pvg-rotate.js';
+import { PvgRotateStore } from './pvg-rotate-store.js';
+import type { AdversarialRole } from './adversarial-provers.js';
 
 type SendFn = (agentId: string, content: string, threadId?: number) => Promise<void>;
 type SendKeyboardFn = (agentId: string, content: string, keyboard: import('grammy').InlineKeyboard, threadId?: number) => Promise<void>;
@@ -41,10 +44,15 @@ export class DeliberationHandler {
   private sendFn: SendFn;
   private sendKeyboardFn: SendKeyboardFn | undefined;
   private blindReviewStore = new BlindReviewStore();
+  private pvgRotateStore: PvgRotateStore;
   private sessions: Map<number, SessionState> = new Map();
 
   public getBlindReviewStore(): BlindReviewStore {
     return this.blindReviewStore;
+  }
+
+  public getPvgRotateStore(): PvgRotateStore {
+    return this.pvgRotateStore;
   }
 
   constructor(
@@ -55,6 +63,7 @@ export class DeliberationHandler {
     options?: {
       facilitatorWorker?: AgentWorker;
       sendKeyboardFn?: SendKeyboardFn;
+      pvgRotateStore?: PvgRotateStore;
     },
   ) {
     this.bus = bus;
@@ -63,6 +72,7 @@ export class DeliberationHandler {
     this.config = config;
     this.sendFn = sendFn;
     this.sendKeyboardFn = options?.sendKeyboardFn;
+    this.pvgRotateStore = options?.pvgRotateStore ?? new PvgRotateStore();
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
@@ -138,6 +148,8 @@ export class DeliberationHandler {
     const agentIds = activeWorkers.map((w) => w.id);
     const stressTestMode = message?.stressTest === true;
     const adversarialMode = message?.adversarialMode;
+    const rotationMode = message?.pvgRotate === true;
+    let rotationPlantedRole: AdversarialRole | null = null;
     const adversarialDebriefs: AdversarialDebriefRecord[] = [];
     let currentRoles = assignRoles(
       agentIds,
@@ -145,8 +157,8 @@ export class DeliberationHandler {
       this.config,
       undefined,
       {
-        allowSneaky: stressTestMode,
-        allowAdversarial: adversarialMode !== undefined,
+        allowSneaky: stressTestMode || rotationMode,
+        allowAdversarial: adversarialMode !== undefined || rotationMode,
       },
     );
     if (stressTestMode && agentIds.length >= 2) {
@@ -154,6 +166,15 @@ export class DeliberationHandler {
     }
     if (adversarialMode && agentIds.length >= 2) {
       currentRoles[pickSneakyTarget(agentIds)] = ADVERSARIAL_MODE_TO_ROLE[adversarialMode];
+    }
+    if (rotationMode && agentIds.length >= 2) {
+      rotationPlantedRole = pickRandomAdversarialRole();
+      const targetAgentId = pickSneakyTarget(agentIds);
+      currentRoles[targetAgentId] = rotationPlantedRole;
+      for (const id of agentIds) {
+        if (id !== targetAgentId) currentRoles[id] = 'critic';
+      }
+      this.pvgRotateStore.create(threadId, rotationPlantedRole);
     }
 
     const blindReviewMode = message?.blindReview === true;
@@ -218,6 +239,7 @@ export class DeliberationHandler {
         role,
         challengePrompt,
         complexity,
+        rotationMode,
       );
 
       // Tag turn into blind-review session if active
@@ -285,8 +307,21 @@ export class DeliberationHandler {
       responses.push({ worker, role, response: responseForStorage });
     }
 
-    // Broadcast adversarial-prover debriefs (sneaky / biased / deceptive / calibrated)
-    if (adversarialDebriefs.length > 0) {
+    if (rotationMode && rotationPlantedRole) {
+      const planted = adversarialDebriefs.find((d) => d.role === rotationPlantedRole);
+      if (planted) this.pvgRotateStore.attachDebrief(threadId, planted);
+    }
+
+    // Rotation mode suppresses debrief broadcast; user sees planted role only after guessing via keyboard.
+    if (rotationMode && rotationPlantedRole && this.sendKeyboardFn) {
+      const keyboard = buildRotationKeyboard();
+      await this.sendKeyboardFn(
+        agentIds[0],
+        'Which failure mode did the prover use this round?\n(Calibrated = honest)',
+        keyboard,
+        threadId,
+      );
+    } else if (adversarialDebriefs.length > 0) {
       const debriefMessage = adversarialDebriefs.map(formatAdversarialDebrief).join('\n');
       await this.sendFn('system-debrief', debriefMessage, threadId);
     }

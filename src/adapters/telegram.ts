@@ -1,5 +1,5 @@
 import { BotManager } from '../telegram/bot.js';
-import type { BlindReviewWiring } from '../telegram/bot.js';
+import type { BlindReviewWiring, PvgRotateWiring } from '../telegram/bot.js';
 import { InlineKeyboard } from 'grammy';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import type { InputAdapter, OutputAdapter, AdapterMessage, RichMetadata } from './types.js';
@@ -14,6 +14,7 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
   private botManager: BotManager;
   private config: TelegramAdapterConfig;
   private blindReviewWiring: BlindReviewWiring | undefined;
+  private pvgRotateWiring: PvgRotateWiring | undefined;
 
   constructor(config: TelegramAdapterConfig) {
     this.config = config;
@@ -28,6 +29,10 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
     this.blindReviewWiring = wiring as BlindReviewWiring;
   }
 
+  setPvgRotateWiring(wiring: unknown): void {
+    this.pvgRotateWiring = wiring as PvgRotateWiring;
+  }
+
   async start(onMessage: (msg: AdapterMessage) => void): Promise<void> {
     const listenerBot = this.botManager.getListenerBot();
     this.botManager.setupListener(
@@ -37,6 +42,7 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
         },
       },
       this.blindReviewWiring,
+      this.pvgRotateWiring,
     );
     await listenerBot.api.deleteWebhook({ drop_pending_updates: true });
     for (let attempt = 1; attempt <= 6; attempt++) {
