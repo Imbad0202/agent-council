@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BlindReviewDB } from '../../src/council/blind-review-db.js';
+import { buildRecommendation, renderSparkline } from '../../src/council/blind-review-db.js';
 import type { BlindReviewSessionRow, BlindReviewEventInput, AgentTier } from '../../src/types.js';
 
 describe('BlindReviewDB constructor', () => {
@@ -157,5 +158,89 @@ describe('BlindReviewDB persistSession', () => {
     })).toThrow();
     expect(db.getSession('s2')).toBeNull();
     expect(db.getEventsForSession('s2')).toHaveLength(0);
+  });
+});
+
+describe('buildRecommendation', () => {
+  const base = { agentId: 'huahua', updatedAt: '2026-04-17' };
+
+  it('n<5: 資料累積中', () => {
+    expect(buildRecommendation({
+      ...base, tier: 'high', sampleCount: 3, avgScore: 4, last5Scores: [4, 4, 4],
+    }, { lowerTierModel: null, currentModel: 'opus' }))
+      .toBe('資料累積中 (n=3/5)');
+  });
+
+  it('n=1: 首次評分', () => {
+    expect(buildRecommendation({
+      ...base, tier: 'high', sampleCount: 1, avgScore: 5, last5Scores: [5],
+    }, { lowerTierModel: null, currentModel: 'opus' }))
+      .toBe('首次評分 (n=1/5)');
+  });
+
+  it('n>=5 avg>=4: 維持現配置', () => {
+    expect(buildRecommendation({
+      ...base, tier: 'medium', sampleCount: 5, avgScore: 4.2, last5Scores: [4, 4, 5, 4, 4],
+    }, { lowerTierModel: 'haiku', currentModel: 'sonnet' }))
+      .toBe('維持現配置');
+  });
+
+  it('n>=5 avg 3-4: 表現尚可', () => {
+    expect(buildRecommendation({
+      ...base, tier: 'low', sampleCount: 5, avgScore: 3.2, last5Scores: [3, 3, 3, 4, 3],
+    }, { lowerTierModel: null, currentModel: 'haiku' }))
+      .toBe('表現尚可，持續觀察');
+  });
+
+  it('n>=5 avg 2-3 tier=high: suggest降到 lower tier', () => {
+    expect(buildRecommendation({
+      ...base, tier: 'high', sampleCount: 6, avgScore: 2.5, last5Scores: [2, 3, 2, 3, 3],
+    }, { lowerTierModel: 'sonnet', currentModel: 'opus' }))
+      .toBe('考慮將 huahua 在 high complexity 的 tier 從 opus 降到 sonnet');
+  });
+
+  it('n>=5 avg 2-3 tier=medium: suggest降到 low tier', () => {
+    expect(buildRecommendation({
+      ...base, tier: 'medium', sampleCount: 6, avgScore: 2.2, last5Scores: [2, 2, 3, 2, 2],
+    }, { lowerTierModel: 'haiku', currentModel: 'sonnet' }))
+      .toBe('考慮將 huahua 在 medium complexity 降到 low tier，或檢視 personality');
+  });
+
+  it('n>=5 avg 2-3 tier=low: personality review', () => {
+    expect(buildRecommendation({
+      ...base, tier: 'low', sampleCount: 6, avgScore: 2.5, last5Scores: [2, 3, 2, 3, 3],
+    }, { lowerTierModel: null, currentModel: 'haiku' }))
+      .toBe('評分偏低，建議檢視 huahua personality 或 topic 分配');
+  });
+
+  it('n>=5 avg<2: 汰換', () => {
+    expect(buildRecommendation({
+      ...base, tier: 'high', sampleCount: 7, avgScore: 1.5, last5Scores: [1, 2, 1, 2, 2],
+    }, { lowerTierModel: 'sonnet', currentModel: 'opus' }))
+      .toBe('評分持續過低，建議檢視 personality / topic 或考慮汰換 agent');
+  });
+
+  it('n<10 avg extreme: append 初期樣本', () => {
+    expect(buildRecommendation({
+      ...base, tier: 'medium', sampleCount: 7, avgScore: 4.9, last5Scores: [5, 5, 5, 5, 5],
+    }, { lowerTierModel: 'haiku', currentModel: 'sonnet' }))
+      .toBe('維持現配置（初期樣本，建議再觀察幾場）');
+  });
+});
+
+describe('renderSparkline', () => {
+  it('returns empty string for empty array', () => {
+    expect(renderSparkline([])).toBe('');
+  });
+
+  it('renders 5 filled stars for [5,5,5,5,5]', () => {
+    expect(renderSparkline([5, 5, 5, 5, 5])).toBe('★★★★★');
+  });
+
+  it('renders graded fill matching score values', () => {
+    const out = renderSparkline([1, 2, 3, 4, 5]);
+    expect(out).toHaveLength(5);
+    expect(out[0]).toBe('☆');
+    expect(out[4]).toBe('★');
   });
 });

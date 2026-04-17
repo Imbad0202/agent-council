@@ -8,6 +8,49 @@ import type {
   BlindReviewEventInput,
 } from '../types.js';
 
+export interface RecommendationContext {
+  currentModel: string;
+  lowerTierModel: string | null;
+}
+
+export function buildRecommendation(
+  stats: AgentTierStats,
+  ctx: RecommendationContext,
+): string {
+  const { sampleCount, avgScore, agentId, tier } = stats;
+
+  if (sampleCount === 0) return '尚無資料';
+  if (sampleCount === 1) return '首次評分 (n=1/5)';
+  if (sampleCount < 5) return `資料累積中 (n=${sampleCount}/5)`;
+
+  let body: string;
+  if (avgScore >= 4.0) body = '維持現配置';
+  else if (avgScore >= 3.0) body = '表現尚可，持續觀察';
+  else if (avgScore >= 2.0) {
+    if (tier === 'high') {
+      const target = ctx.lowerTierModel ?? 'low tier';
+      body = `考慮將 ${agentId} 在 high complexity 的 tier 從 ${ctx.currentModel} 降到 ${target}`;
+    } else if (tier === 'medium') {
+      body = `考慮將 ${agentId} 在 medium complexity 降到 low tier，或檢視 personality`;
+    } else {
+      body = `評分偏低，建議檢視 ${agentId} personality 或 topic 分配`;
+    }
+  } else {
+    body = '評分持續過低，建議檢視 personality / topic 或考慮汰換 agent';
+  }
+
+  const extremeAvg = avgScore >= 4.8;
+  if (sampleCount < 10 && extremeAvg) {
+    body = `${body}（初期樣本，建議再觀察幾場）`;
+  }
+  return body;
+}
+
+export function renderSparkline(scores: number[]): string {
+  if (scores.length === 0) return '';
+  return scores.map((s) => (s >= 3.5 ? '★' : '☆')).join('');
+}
+
 interface SessionRow {
   session_id: string;
   thread_id: number;
