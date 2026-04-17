@@ -2,6 +2,11 @@
 import { describe, it, expect } from 'vitest';
 import { pickRandomAdversarialRole } from '../../src/council/pvg-rotate.js';
 import { PvgRotateStore } from '../../src/council/pvg-rotate-store.js';
+import {
+  buildRotationKeyboard,
+  formatGuessReveal,
+  ROTATION_CALLBACK_PATTERN,
+} from '../../src/council/pvg-rotate.js';
 
 describe('pickRandomAdversarialRole', () => {
   it('returns all four adversarial roles given rng sweep', () => {
@@ -82,5 +87,94 @@ describe('PvgRotateStore', () => {
       debrief: 'anchored on first estimate',
     });
     expect(store.get(42)?.plantedDebrief?.kind).toBe('anchoring');
+  });
+});
+
+describe('buildRotationKeyboard', () => {
+  it('builds 4 buttons with correct callback data', () => {
+    const kb = buildRotationKeyboard();
+    const json = JSON.parse(JSON.stringify(kb));
+    const rows: Array<Array<{ text: string; callback_data: string }>> = json.inline_keyboard;
+    const flat = rows.flat();
+    expect(flat).toHaveLength(4);
+    const callbackData = flat.map((b) => b.callback_data);
+    expect(callbackData).toEqual([
+      'pvg-rotate-guess:sneaky-prover',
+      'pvg-rotate-guess:biased-prover',
+      'pvg-rotate-guess:deceptive-prover',
+      'pvg-rotate-guess:calibrated-prover',
+    ]);
+    expect(flat[3].text.toLowerCase()).toContain('honest');
+  });
+
+  it('ROTATION_CALLBACK_PATTERN matches generated data', () => {
+    const m = 'pvg-rotate-guess:biased-prover'.match(ROTATION_CALLBACK_PATTERN);
+    expect(m).not.toBeNull();
+    expect(m![1]).toBe('biased-prover');
+  });
+});
+
+describe('formatGuessReveal', () => {
+  const emptyStats = {
+    total: 0,
+    correct: 0,
+    perVector: {
+      'sneaky-prover': { hit: 0, miss: 0 },
+      'biased-prover': { hit: 0, miss: 0 },
+      'deceptive-prover': { hit: 0, miss: 0 },
+      'calibrated-prover': { hit: 0, miss: 0 },
+    },
+  };
+
+  it('renders a hit message with stats', () => {
+    const msg = formatGuessReveal({
+      plantedRole: 'biased-prover',
+      guessedRole: 'biased-prover',
+      debriefLine: '🎯 [BIASED DEBRIEF] agent-x framed with anchoring bias: anchored on first estimate',
+      stats: {
+        total: 3,
+        correct: 2,
+        perVector: {
+          'sneaky-prover': { hit: 1, miss: 0 },
+          'biased-prover': { hit: 1, miss: 0 },
+          'deceptive-prover': { hit: 0, miss: 1 },
+          'calibrated-prover': { hit: 0, miss: 0 },
+        },
+      },
+    });
+    expect(msg).toContain('✅');
+    expect(msg).toContain('2 correct of 3');
+    expect(msg).toContain('anchoring');
+  });
+
+  it('renders a miss message and flags the weakest vector', () => {
+    const msg = formatGuessReveal({
+      plantedRole: 'deceptive-prover',
+      guessedRole: 'biased-prover',
+      debriefLine: '🎭 [DECEPTIVE DEBRIEF] agent-y conclusion-evidence mismatch: overstated 8% effect',
+      stats: {
+        total: 4,
+        correct: 1,
+        perVector: {
+          'sneaky-prover': { hit: 1, miss: 0 },
+          'biased-prover': { hit: 0, miss: 1 },
+          'deceptive-prover': { hit: 0, miss: 2 },
+          'calibrated-prover': { hit: 0, miss: 0 },
+        },
+      },
+    });
+    expect(msg).toContain('❌');
+    expect(msg).toContain('deceptive');
+    expect(msg.toLowerCase()).toContain('weakest');
+  });
+
+  it('omits stats block when total=0 (first round)', () => {
+    const msg = formatGuessReveal({
+      plantedRole: 'sneaky-prover',
+      guessedRole: 'sneaky-prover',
+      debriefLine: '🔒 [SNEAKY DEBRIEF] agent-z planted logical-fallacy: false dichotomy',
+      stats: emptyStats,
+    });
+    expect(msg).not.toMatch(/correct of/);
   });
 });
