@@ -6,6 +6,7 @@ import {
   DECEPTIVE_TRAILER_PREFIX,
   CALIBRATED_TRAILER_PREFIX,
   BIAS_KINDS,
+  isAdversarialRole,
 } from '../council/adversarial-provers.js';
 
 const ROLE_DIRECTIVES: Record<AgentRole, string> = {
@@ -118,6 +119,13 @@ The trailer will be parsed and STRIPPED before broadcast — other agents will n
 
 export const ROLE_DIRECTIVES_INTERNAL = ROLE_DIRECTIVES;
 
+export const ROTATION_STEALTH_PREAMBLE = `ROTATION MODE: Respond in the same tone, length, and structure as a normal council member (advocate / analyst / synthesizer). Do NOT signal or telegraph which failure mode you are exercising. In particular: avoid first-person framings that tell the user which vector is in play (for example "given my recent experience," "I've seen three cases," or similar tells). The user is trying to identify the failure mode blind from the content alone.`;
+
+export function applyRotationPreamble(role: AgentRole, directive: string): string {
+  if (!isAdversarialRole(role)) return directive;
+  return `${ROTATION_STEALTH_PREAMBLE}\n\n${directive}`;
+}
+
 const COUNCIL_RULES = `# Council Rules
 
 - You are in a group discussion with the user and another AI agent.
@@ -137,6 +145,7 @@ export function buildSystemPromptParts(
   agentConfig: AgentConfig,
   memorySyncPath: string,
   role: AgentRole,
+  rotationMode = false,
 ): SystemPromptParts {
   const loader = new MemorySyncLoader(memorySyncPath);
   const memoryIndex = loader.loadIndex(agentConfig.memoryDir);
@@ -149,7 +158,8 @@ export function buildSystemPromptParts(
   stableSections.push(COUNCIL_RULES);
 
   const stable = stableSections.join('\n\n---\n\n');
-  const volatile = `# Role Assignment: ${role}\n\n${ROLE_DIRECTIVES[role]}`;
+  const directive = rotationMode ? applyRotationPreamble(role, ROLE_DIRECTIVES[role]) : ROLE_DIRECTIVES[role];
+  const volatile = `# Role Assignment: ${role}\n\n${directive}`;
 
   return { stable, volatile };
 }
@@ -158,7 +168,8 @@ export function buildSystemPrompt(
   agentConfig: AgentConfig,
   memorySyncPath: string,
   role: AgentRole,
+  rotationMode = false,
 ): string {
-  const { stable, volatile } = buildSystemPromptParts(agentConfig, memorySyncPath, role);
+  const { stable, volatile } = buildSystemPromptParts(agentConfig, memorySyncPath, role, rotationMode);
   return `${stable}\n\n---\n\n${volatile}`;
 }

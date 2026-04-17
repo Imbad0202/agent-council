@@ -7,6 +7,7 @@ import {
   formatGuessReveal,
   ROTATION_CALLBACK_PATTERN,
 } from '../../src/council/pvg-rotate.js';
+import { ROTATION_STEALTH_PREAMBLE, applyRotationPreamble } from '../../src/worker/personality.js';
 
 describe('pickRandomAdversarialRole', () => {
   it('returns all four adversarial roles given rng sweep', () => {
@@ -176,5 +177,24 @@ describe('formatGuessReveal', () => {
       stats: emptyStats,
     });
     expect(msg).not.toMatch(/correct of/);
+  });
+});
+
+describe('rotation stealth preamble', () => {
+  it('ROTATION_STEALTH_PREAMBLE mentions do-not-telegraph', () => {
+    expect(ROTATION_STEALTH_PREAMBLE).toContain('ROTATION MODE');
+    expect(ROTATION_STEALTH_PREAMBLE.toLowerCase()).toContain('do not');
+    expect(ROTATION_STEALTH_PREAMBLE.toLowerCase()).toContain('telegraph');
+  });
+
+  it('applyRotationPreamble prepends preamble to adversarial role directives only', () => {
+    const biased = applyRotationPreamble('biased-prover', 'BIASED RULE body');
+    expect(biased.startsWith('ROTATION MODE')).toBe(true);
+    expect(biased).toContain('BIASED RULE body');
+  });
+
+  it('applyRotationPreamble leaves non-adversarial roles untouched', () => {
+    const critic = applyRotationPreamble('critic', 'CRITIC RULE body');
+    expect(critic).toBe('CRITIC RULE body');
   });
 });
