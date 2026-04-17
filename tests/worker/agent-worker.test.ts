@@ -100,6 +100,32 @@ describe('AgentWorker', () => {
     });
   });
 
+  describe('rotationMode threading', () => {
+    it('applies rotation stealth preamble when rotationMode=true', async () => {
+      const messages: CouncilMessage[] = [
+        { id: 'msg-1', role: 'human', content: 'Hello', timestamp: Date.now() },
+      ];
+
+      await worker.respond(messages, 'biased-prover', undefined, 'medium', true);
+
+      const chatCall = vi.mocked(mockProvider.chat).mock.calls[0];
+      const capturedSystemPrompt = chatCall[1].systemPrompt as string;
+      expect(capturedSystemPrompt).toContain('ROTATION MODE');
+    });
+
+    it('does not apply rotation preamble when rotationMode=false (default)', async () => {
+      const messages: CouncilMessage[] = [
+        { id: 'msg-1', role: 'human', content: 'Hello', timestamp: Date.now() },
+      ];
+
+      await worker.respond(messages, 'biased-prover', undefined, 'medium');
+
+      const chatCall = vi.mocked(mockProvider.chat).mock.calls[0];
+      const capturedSystemPrompt = chatCall[1].systemPrompt as string;
+      expect(capturedSystemPrompt).not.toContain('ROTATION MODE');
+    });
+  });
+
   describe('model tier resolution', () => {
     it('uses complexity tier to select model when config has models map', async () => {
       const tieredConfig: AgentConfig = {
