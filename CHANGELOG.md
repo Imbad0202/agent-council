@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `BlindReviewDB` persists `/blindreview` scores to `data/council.db` (3-table audit trail: sessions, events, stats).
+- Reveal message now includes per-(agent, tier) historical sparkline + rule-based routing recommendation when sample_count >= 5.
+- `blind-review.persist-failed` event for DB write failures (fail-soft; reveal still sends).
+- `AgentWorker.respond` returns `tierUsed` + `modelUsed` in `ProviderResponse`.
+- `BlindReviewStore.recordTurn` / `getLatestTurnFor` / `attachDB` / `onPersistFailed`.
+- `BlindReviewDB.rebuildStats` for drift recovery.
+
+### Changed
+- `formatRevealMessage` signature gained an optional `FormatRevealOptions` bag (`db`, `modelConfigForAgent`). Callers without the bag get the existing behavior.
+- `BlindReviewSession` gained `turnLog` and `feedbackText` fields.
+
 ## [0.3.1] - 2026-04-15
 
 ### Fixed
