@@ -4,17 +4,77 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-20
+
 ### Added
-- `BlindReviewDB` persists `/blindreview` scores to `data/council.db` (3-table audit trail: sessions, events, stats).
-- Reveal message now includes per-(agent, tier) historical sparkline + rule-based routing recommendation when sample_count >= 5.
-- `blind-review.persist-failed` event for DB write failures (fail-soft; reveal still sends).
+
+**Extended thinking + Opus 4.7 alignment (#5, #6, #14)**
+- `ThinkingConfig` type + optional `thinking` field on `ChatOptions`, `ProviderResponse`, and `AgentConfig`.
+- Per-tier thinking config in agent YAML (`thinking.{low,medium,high}`), routed by `AgentWorker.resolveThinking(complexity)` mirroring `resolveModel`.
+- `ClaudeProvider` passes `thinking` to the Anthropic SDK, forces `temperature=1` when enabled (SDK requirement), and extracts the reasoning block into the response.
+- Adaptive thinking (`{type: 'adaptive'}`) for Opus 4.7, which does not support fixed `budget_tokens`. Older models that declare `budget_tokens: N` still work.
+- 賓賓 upgraded to Claude Opus 4.7 on high-complexity turns with adaptive thinking; low/medium remain on lower tiers.
+
+**Prompt caching (#8, #9)**
+- `ChatOptions.systemPromptParts?: SystemPromptPart[]` for cache-aware system prompts on Claude. Callers supply both the plain `systemPrompt` (unchanged contract) and the optional parts array.
+- Stable prefix (identity + memory index + council rules) marked `cache_control: ephemeral`; the per-turn role directive lives in a second non-cached part. First turn pays full input tokens; subsequent turns in the same session hit the prefix cache.
+- `cache_system_prompt: true` opt-in on 賓賓 and 主持人 (both called multiple times per session).
+- System prompt section order changed from `Identity → Memory → Role → Rules` to `Identity → Memory → Rules → Role` so the cacheable prefix stays byte-identical across turns.
+- `ClaudeProvider.toAnthropicSystem` returns typed `Anthropic.Messages.TextBlockParam[]` for compile-time SDK drift detection.
+
+**System model centralization (#7, #10)**
+- `system_models:` block in `council.yaml` for `intent_classification` and `task_decomposition` models. `IntentGate` and `ExecutionDispatcher` constructors accept the model IDs instead of hardcoding them.
+- Single shared `DEFAULT_SYSTEM_MODEL` constant in `src/constants.ts` (replaces the two duplicate constants that had identical values).
+
+**Blind-review → model routing closed loop (#11)**
+- `BlindReviewDB` persists `/blindreview` scores to `data/council.db` (3-table audit trail: `blind_review_sessions`, `blind_review_events`, `blind_review_stats`). Transactional writes with rollback.
+- Reveal message shows per-(agent, tier) historical sparkline and a rule-based routing recommendation when `sample_count >= 5`. User retains `council.yaml` authority; the system only suggests.
+- `blind-review.persist-failed` event for DB write failures (fail-soft — reveal still sends).
 - `AgentWorker.respond` returns `tierUsed` + `modelUsed` in `ProviderResponse`.
 - `BlindReviewStore.recordTurn` / `getLatestTurnFor` / `attachDB` / `onPersistFailed`.
 - `BlindReviewDB.rebuildStats` for drift recovery.
+- New types: `AgentTier`, `BlindReview{Row,Input,Stats}`.
+
+**PVG adversarial roles (#12)**
+- Extends sneaky-prover into a four-vector Prover-Verifier Games framework (Kirchner et al. 2024):
+  - `biased-prover` — availability / anchoring / confirmation / sunk-cost framing.
+  - `deceptive-prover` — every fact correct, but conclusion overshoots evidence.
+  - `calibrated-prover` — explicit confidence 0–1 with at least one declared unknown (honest-prover baseline).
+- New Telegram commands: `/pvgbiased`, `/pvgdeceptive`, `/pvgcalibrated`.
+- Unified `processAdversarialResponse` dispatcher so `deliberation.ts` has one strip-branch and one debrief broadcast across all four vectors.
+- `allowAdversarial` opt-in guard parallel to `allowSneaky`.
+- Shared `escapeRegex` helper and `AdversarialMode` type; `AgentRole` cast replaced with exhaustive `ADVERSARIAL_MODE_TO_ROLE` record.
+
+**PVG rotation mode (#13)**
+- `/pvgrotate` — random PVG vector per round (one of sneaky / biased / deceptive / calibrated). User identifies the planted vector via a 4-button inline keyboard; the actual role is revealed only after the guess is recorded.
+- `PvgRotateStore` (in-memory per-thread) + `PvgRotateDB` (`pvg_rotate_rounds` table on shared `data/council.db`), mirroring the blind-review pattern.
+- Non-PVG agents are forced to `critic` role in rotation mode — the council's job becomes verification, not advocacy.
+- `ROTATION_STEALTH_PREAMBLE` injected only for adversarial roles in rotation mode, to suppress first-person tells that would telegraph the vector.
+- `CouncilMessage.pvgRotate?: boolean` flag.
+- Reveal shows guess vs actual, debrief line, per-vector running hit stats, and weakest-vector callout.
 
 ### Changed
-- `formatRevealMessage` signature gained an optional `FormatRevealOptions` bag (`db`, `modelConfigForAgent`). Callers without the bag get the existing behavior.
+
+- `@anthropic-ai/sdk`: 0.52 → 0.90 (required for `ThinkingConfigAdaptive`).
+- Model ID sweep: `opus-4-6` → `opus-4-7`, `sonnet-4-5` → `sonnet-4-6`, `claude-3-5-*` / `haiku-*` → `sonnet-4-6` (per no-haiku policy) across config/, src/, tests/, docs/, examples/.
+- `detection_model`, `intent_classification`, and `task_decomposition` defaults: `claude-haiku-4-5-*` → `claude-sonnet-4-6`.
+- Personality prompts rewritten from negative framing (`必須精簡不超過 X 字`) to positive examples per Opus 4.7 guidance (huahua, facilitator).
+- `formatRevealMessage` signature gained an optional `FormatRevealOptions` bag (`db`, `modelConfigForAgent`); callers without the bag get the prior behavior.
 - `BlindReviewSession` gained `turnLog` and `feedbackText` fields.
+- `SystemModelsConfig` inner fields are no longer double-optional — the loader fills defaults, and `index.ts` drops its `?.` chain.
+
+### Fixed
+
+- `ClaudeProvider` now throws when a caller explicitly supplies a non-1 temperature alongside `thinking`, instead of silently coercing to 1. Omitting `temperature` still defaults to 1.
+- `thinking.<tier>.budget_tokens` YAML values are validated at `loadAgentConfig` time (rejects strings like `"32k"` with a quoted error) instead of surfacing an opaque Anthropic API error at first call.
+
+### Security
+
+- `protobufjs` 7.5.4 → 7.5.5 via `npm audit fix` to resolve [GHSA-xq3m-2v4x-88gg](https://github.com/advisories/GHSA-xq3m-2v4x-88gg) (arbitrary code execution, critical severity; transitive dep through `@google/genai`). Lock-file-only change.
+
+### Tests
+
+- 527 passing (up from 414 at v0.3.1).
 
 ## [0.3.1] - 2026-04-15
 
