@@ -66,7 +66,9 @@ describe('DeliberationHandler — facilitator summary + collaboration score', ()
 
     const payload = endedPayload as unknown as EventMap['deliberation.ended'];
     expect(payload.collaborationScore!.axisBreakdown.interruptionRate).toBeGreaterThan(0);
-    expect(payload.collaborationScore!.axisBreakdown.acceptanceRatio).toBe(1);
+    // Pessimistic scoring: acceptance/novel default to 0 without
+    // agent-side acknowledgment detection.
+    expect(payload.collaborationScore!.axisBreakdown.acceptanceRatio).toBe(0);
   });
 
   it('collaborationScore resets between rounds on the same thread', async () => {

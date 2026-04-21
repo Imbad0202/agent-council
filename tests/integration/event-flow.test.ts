@@ -97,7 +97,12 @@ describe('Event Flow Integration', () => {
       }
     });
 
-    let endedPayload: { collaborationScore?: { level: string } } | null = null;
+    let endedPayload: {
+      collaborationScore?: {
+        level: string;
+        axisBreakdown: { interruptionRate: number };
+      };
+    } | null = null;
     const done = new Promise<void>((resolve) => {
       bus.on('deliberation.ended', (p) => {
         endedPayload = p as unknown as typeof endedPayload;
@@ -120,6 +125,9 @@ describe('Event Flow Integration', () => {
 
     expect(endedPayload).not.toBeNull();
     expect(endedPayload!.collaborationScore).toBeDefined();
-    expect(endedPayload!.collaborationScore!.level).not.toBe('surface');
+    // Pessimistic scoring means a single submitted critique stays at 'surface'
+    // until agent acknowledgment is implemented. What we verify end-to-end is
+    // that the critique reached the scorer: interruptionRate > 0.
+    expect(endedPayload!.collaborationScore!.axisBreakdown.interruptionRate).toBeGreaterThan(0);
   });
 });

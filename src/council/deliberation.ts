@@ -284,26 +284,37 @@ export class DeliberationHandler {
     for (const worker of activeWorkers) {
       const role = currentRoles[worker.id];
 
+      // Fire the HITL invite BEFORE opening the critique window so adapters
+      // can surface it to the user in time to actually act on it. The
+      // convergence prompt itself still gets injected later as part of the
+      // challenge-prompt build.
+      if (session.antiSycophancy.shouldInviteHumanCritique()) {
+        this.bus.emit('human-critique.invited', { threadId, trigger: 'convergence' });
+      }
+
       // Human-critique pause: open a window before this agent speaks. If the
-      // user submits a critique, inject it into history + challenge prompt.
+      // user submits a critique, inject it one-shot into THIS agent's history
+      // + challenge prompt only. We deliberately don't push it onto
+      // session.conversationHistory so a critique targeted at worker.id
+      // doesn't leak into later agents' or later rounds' context.
       const critiqueOutcome = await this.awaitCritique(threadId, prevAgentId, worker.id);
       let injectedCritiqueText: string | undefined;
+      let turnCritiqueMsg: CouncilMessage | undefined;
       if (critiqueOutcome.kind === 'submitted') {
-        const critiqueMsg = makeHumanCritique({
+        turnCritiqueMsg = makeHumanCritique({
           content: critiqueOutcome.content,
           stance: critiqueOutcome.stance,
           targetAgent: worker.id,
           threadId,
         });
-        session.conversationHistory.push(critiqueMsg);
         session.critiqueLog.humanCritiques.push({
           stance: critiqueOutcome.stance,
-          // optimistic — acknowledgment detection is out of scope for this slice
-          // (future: parse agent response for critique reference).
-          acknowledgedByNextAgent: true,
-          // Heuristic: 'addPremise' always introduces a novel angle; 'challenge'
-          // does when the critique text does not merely echo prior agents.
-          introducedNovelAngle: critiqueOutcome.stance !== 'question',
+          // Pessimistic defaults: flipped to true only when a follow-up slice
+          // adds NLP detection of agent acknowledgment / angle novelty.
+          // Scoring a submitted challenge as accepted+novel before the agent
+          // has even responded inflates depth scores artificially.
+          acknowledgedByNextAgent: false,
+          introducedNovelAngle: false,
         });
         injectedCritiqueText = critiqueOutcome.content;
       }
@@ -326,7 +337,6 @@ export class DeliberationHandler {
         challengePrompt = challengePrompt
           ? `${challengePrompt}\n\n${convergencePrompt}`
           : convergencePrompt;
-        this.bus.emit('human-critique.invited', { threadId, trigger: 'convergence' });
       }
 
       if (critiqueOutcome.kind === 'submitted' && injectedCritiqueText) {
@@ -345,8 +355,12 @@ export class DeliberationHandler {
         session.pendingPatternInjection = null;
       }
 
+      const turnHistory = turnCritiqueMsg
+        ? [...session.conversationHistory, turnCritiqueMsg]
+        : session.conversationHistory;
+
       const response = await worker.respond(
-        session.conversationHistory,
+        turnHistory,
         role,
         challengePrompt,
         complexity,

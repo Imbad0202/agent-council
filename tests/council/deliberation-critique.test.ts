@@ -161,6 +161,68 @@ describe('DeliberationHandler — human critique integration', () => {
     expect((workers[1].respond as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
   });
 
+  it('when convergence is already detected, invited fires BEFORE requested on the SAME agent turn', async () => {
+    // Wiring an adapter to convergence needs the invite to precede the
+    // critique window for that turn. Otherwise the invite arrives after
+    // the window has already closed and is useless.
+    //
+    // We pre-seed the AntiSycophancyEngine by running one deliberation's
+    // worth of agreement classifications, THEN in the next round watch
+    // the event order for the FIRST agent turn: invited must arrive
+    // before that turn's requested.
+    workers[0].respond = vi.fn().mockResolvedValue({
+      content: '完全同意上一位 no disagreement',
+      confidence: 0.8, references: [], tokensUsed: { input: 0, output: 0 },
+    });
+    workers[1].respond = vi.fn().mockResolvedValue({
+      content: '我也同意，exactly 說得對',
+      confidence: 0.8, references: [], tokensUsed: { input: 0, output: 0 },
+    });
+
+    const tightConfig = {
+      ...minConfig,
+      antiSycophancy: { disagreementThreshold: 0.5, consecutiveLowRounds: 2, challengeAngles: ['x'] },
+    };
+
+    const eventsByRound: Array<Array<{ type: string }>> = [];
+    let currentRound: Array<{ type: string }> = [];
+    bus.on('human-critique.invited', () => currentRound.push({ type: 'invited' }));
+    bus.on('human-critique.requested', (p) => {
+      currentRound.push({ type: 'requested' });
+      critiqueStore.skip(p.threadId, 'user-skip');
+    });
+    bus.on('deliberation.ended', () => {
+      eventsByRound.push(currentRound);
+      currentRound = [];
+    });
+
+    new DeliberationHandler(bus, workers, tightConfig, sendFn, {
+      critiqueStore,
+      critiqueTimeoutMs: 500,
+    });
+
+    // Round 1: accumulate classifications (convergence not yet flagged)
+    const r1 = new Promise<void>((resolve) => bus.once('deliberation.ended', () => resolve()));
+    bus.emit('intent.classified', {
+      intent: 'deliberation', complexity: 'medium', threadId: 33,
+      message: makeMessage('q0', 33),
+    });
+    await r1;
+
+    // Round 2: convergence is already detected from round 1. The FIRST
+    // event of round 2 must be invited, before any requested.
+    const r2 = new Promise<void>((resolve) => bus.once('deliberation.ended', () => resolve()));
+    bus.emit('intent.classified', {
+      intent: 'deliberation', complexity: 'medium', threadId: 33,
+      message: makeMessage('q1', 33),
+    });
+    await r2;
+
+    const r2Events = eventsByRound[1];
+    expect(r2Events[0]).toEqual({ type: 'invited' });
+    expect(r2Events.findIndex((e) => e.type === 'requested')).toBeGreaterThan(0);
+  });
+
   it('emits human-critique.invited when AntiSycophancyEngine detects convergence', async () => {
     const invited: EventMap['human-critique.invited'][] = [];
     bus.on('human-critique.invited', (p) => invited.push(p));
@@ -205,6 +267,84 @@ describe('DeliberationHandler — human critique integration', () => {
     expect(invited.length).toBeGreaterThanOrEqual(1);
     expect(invited[0].threadId).toBe(11);
     expect(invited[0].trigger).toBe('convergence');
+  });
+
+  it('a single challenge does NOT auto-inflate score to deep/transformative', async () => {
+    // Pessimistic-until-proven scoring: submitted critiques start with
+    // acknowledgedByNextAgent=false and introducedNovelAngle=false.
+    // Without real acknowledgment detection, a single challenge should not
+    // be enough to claim "transformative" collaboration depth.
+    const payloads: EventMap['deliberation.ended'][] = [];
+    bus.on('deliberation.ended', (p) => payloads.push(p));
+
+    bus.on('human-critique.requested', (p) => {
+      critiqueStore.submit(p.threadId, {
+        stance: 'challenge',
+        content: 'one sharp push-back',
+      });
+    });
+
+    new DeliberationHandler(bus, workers, minConfig, sendFn, {
+      critiqueStore,
+      critiqueTimeoutMs: 500,
+    });
+
+    const done = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', () => resolve());
+    });
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId: 21,
+      message: makeMessage('topic', 21),
+    });
+    await done;
+
+    expect(payloads).toHaveLength(1);
+    const score = payloads[0].collaborationScore!;
+    expect(score.axisBreakdown.acceptanceRatio).toBe(0);
+    expect(score.axisBreakdown.divergenceIntroduced).toBe(0);
+    expect(['surface', 'moderate']).toContain(score.level);
+  });
+
+  it('critique targeted at agent-b does NOT appear in agent-a history in a later round', async () => {
+    // The critique is scoped to the turn of the targeted agent (one-shot
+    // injection). It must not leak into subsequent rounds' conversation
+    // history where the same agent-a would see it.
+    bus.on('human-critique.requested', (p) => {
+      if (p.nextAgent === 'agent-b') {
+        critiqueStore.submit(p.threadId, { stance: 'challenge', content: 'r1 critique' });
+      } else {
+        critiqueStore.skip(p.threadId, 'user-skip');
+      }
+    });
+
+    new DeliberationHandler(bus, workers, minConfig, sendFn, {
+      critiqueStore,
+      critiqueTimeoutMs: 500,
+    });
+
+    // Round 1: critique goes to agent-b
+    const r1 = new Promise<void>((resolve) => bus.once('deliberation.ended', () => resolve()));
+    bus.emit('intent.classified', {
+      intent: 'deliberation', complexity: 'medium', threadId: 50,
+      message: makeMessage('r1', 50),
+    });
+    await r1;
+
+    // Round 2: skip everything. agent-a goes first again.
+    const r2 = new Promise<void>((resolve) => bus.once('deliberation.ended', () => resolve()));
+    bus.emit('intent.classified', {
+      intent: 'deliberation', complexity: 'medium', threadId: 50,
+      message: makeMessage('r2', 50),
+    });
+    await r2;
+
+    // agent-a in round 2 must NOT see the r1 critique (it was targeted at agent-b)
+    const agentAMock = workers[0].respond as ReturnType<typeof vi.fn>;
+    const r2History = agentAMock.mock.calls[1][0] as CouncilMessage[];
+    const stale = r2History.find((m) => m.role === 'human-critique');
+    expect(stale).toBeUndefined();
   });
 
   it('submitted critique is acknowledged in the scorer-ready session log', async () => {
