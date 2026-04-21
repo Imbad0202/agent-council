@@ -13,6 +13,12 @@ export interface CliAdapterConfig {
   verbose: boolean;
 }
 
+// Narrow structural interface for feature-detecting the readline-based prompt
+// path in src/index.ts. Renaming the method on the class breaks this.
+export interface DefaultCritiquePromptAdapter {
+  defaultPromptUser(req: CritiqueRequest): Promise<CritiquePromptResult>;
+}
+
 const AGENT_COLORS: Record<string, (text: string) => string> = {
   huahua: chalk.cyan,
   binbin: chalk.yellow,

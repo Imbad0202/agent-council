@@ -10,6 +10,13 @@ import { formatAdversarialDebrief } from '../council/adversarial-provers.js';
 import type { PvgRotateStore } from '../council/pvg-rotate-store.js';
 import type { PvgRotateDB } from '../council/pvg-rotate-db.js';
 import { emptyPvgRotateStats } from '../council/pvg-rotate-db.js';
+import type { PendingCritiqueState } from './critique-state.js';
+import {
+  CRITIQUE_CALLBACK_PATTERN,
+  CRITIQUE_PROMPT_AGENT_ID,
+  buildCritiqueCallback,
+  buildCritiqueTextHandler,
+} from './critique-callback.js';
 import { randomUUID } from 'node:crypto';
 
 export interface BlindReviewWiring {
@@ -26,6 +33,11 @@ export interface PvgRotateWiring {
   db?: PvgRotateDB;
   sendFn: (agentId: string, content: string, threadId?: number) => Promise<void>;
   bus?: EventBus;
+}
+
+export interface CritiqueUiWiring {
+  state: PendingCritiqueState;
+  sendFn?: (agentId: string, content: string, threadId?: number) => Promise<void>;
 }
 
 type CommandFlag =
@@ -259,6 +271,7 @@ export class BotManager {
     handler: { handleHumanMessage: (msg: CouncilMessage) => void },
     blindReviewWiring?: BlindReviewWiring,
     pvgRotateWiring?: PvgRotateWiring,
+    critiqueUiWiring?: CritiqueUiWiring,
   ): void {
     const listenerBot = this.bots.get(this.listenerAgentId);
     if (!listenerBot) {
@@ -271,13 +284,23 @@ export class BotManager {
     listenerBot.command('pvgcalibrated', buildPvgTestHandler(this.groupChatId, handler, 'calibrated'));
     listenerBot.command('pvgrotate', buildPvgRotateHandler(this.groupChatId, handler));
 
-    listenerBot.on('message:text', async (ctx) => {
-      if (ctx.chat.id !== this.groupChatId) return;
+    const defaultTextHandler = async (ctx: Context) => {
+      if (ctx.chat?.id !== this.groupChatId) return;
       if (ctx.from?.is_bot) return;
-
+      if (!ctx.message) return;
       const councilMsg = createCouncilMessageFromTelegram(ctx.message);
       handler.handleHumanMessage(councilMsg);
-    });
+    };
+
+    if (critiqueUiWiring) {
+      listenerBot.on('message:text', buildCritiqueTextHandler(
+        this.groupChatId,
+        critiqueUiWiring.state,
+        defaultTextHandler,
+      ));
+    } else {
+      listenerBot.on('message:text', defaultTextHandler);
+    }
 
     if (blindReviewWiring) {
       listenerBot.command('blindreview', buildBlindReviewHandler(this.groupChatId, handler));
@@ -303,6 +326,18 @@ export class BotManager {
           pvgRotateWiring.sendFn,
           pvgRotateWiring.bus,
         ),
+      );
+    }
+
+    if (critiqueUiWiring) {
+      const configuredSendFn = critiqueUiWiring.sendFn;
+      const followUpSend = configuredSendFn
+        ? (text: string, threadId: number) =>
+            configuredSendFn(CRITIQUE_PROMPT_AGENT_ID, text, threadId)
+        : async () => {};
+      listenerBot.callbackQuery(
+        CRITIQUE_CALLBACK_PATTERN,
+        buildCritiqueCallback(this.groupChatId, critiqueUiWiring.state, followUpSend),
       );
     }
   }
