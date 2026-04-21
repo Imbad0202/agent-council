@@ -3,50 +3,9 @@ import { DeliberationHandler } from '../../src/council/deliberation.js';
 import { EventBus } from '../../src/events/bus.js';
 import type { EventMap } from '../../src/events/bus.js';
 import type { AgentWorker } from '../../src/worker/agent-worker.js';
-import type { CouncilConfig, CouncilMessage, ProviderResponse } from '../../src/types.js';
+import type { CouncilMessage, ProviderResponse } from '../../src/types.js';
 import type { AgentTier } from '../../src/types.js';
-
-function makeWorker(id: string, name: string): AgentWorker {
-  return {
-    id,
-    name,
-    respond: vi.fn<[], Promise<ProviderResponse>>().mockResolvedValue({
-      content: `Response from ${id}`,
-      confidence: 0.8,
-      references: [],
-      tokensUsed: { input: 100, output: 50 },
-    }),
-  } as unknown as AgentWorker;
-}
-
-const minConfig: CouncilConfig = {
-  gateway: {
-    thinkingWindowMs: 0,
-    randomDelayMs: [0, 0],
-    maxInterAgentRounds: 3,
-    contextWindowTurns: 10,
-    sessionMaxTurns: 20,
-  },
-  antiSycophancy: {
-    disagreementThreshold: 0.2,
-    consecutiveLowRounds: 3,
-    challengeAngles: ['cost', 'risk', 'alternatives'],
-  },
-  roles: {
-    default2Agents: ['advocate', 'critic'],
-    topicOverrides: {},
-  },
-};
-
-function makeMessage(content: string, threadId = 1): CouncilMessage {
-  return {
-    id: `msg-${Date.now()}`,
-    role: 'human',
-    content,
-    timestamp: Date.now(),
-    threadId,
-  };
-}
+import { makeWorker, minConfig, makeMessage } from './helpers.js';
 
 describe('DeliberationHandler', () => {
   let bus: EventBus;
