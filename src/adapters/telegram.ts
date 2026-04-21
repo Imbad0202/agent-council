@@ -3,6 +3,11 @@ import type { BlindReviewWiring, PvgRotateWiring } from '../telegram/bot.js';
 import { InlineKeyboard } from 'grammy';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import type { InputAdapter, OutputAdapter, AdapterMessage, RichMetadata } from './types.js';
+import {
+  dispatchCritiqueRequest,
+  type HumanCritiqueWiring,
+  type CritiqueRequest,
+} from '../council/human-critique-wiring.js';
 
 export interface TelegramAdapterConfig {
   groupChatId: number;
@@ -15,6 +20,7 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
   private config: TelegramAdapterConfig;
   private blindReviewWiring: BlindReviewWiring | undefined;
   private pvgRotateWiring: PvgRotateWiring | undefined;
+  private critiqueWiring: HumanCritiqueWiring | undefined;
 
   constructor(config: TelegramAdapterConfig) {
     this.config = config;
@@ -31,6 +37,14 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
 
   setPvgRotateWiring(wiring: unknown): void {
     this.pvgRotateWiring = wiring as PvgRotateWiring;
+  }
+
+  setHumanCritiqueWiring(wiring: unknown): void {
+    this.critiqueWiring = wiring as HumanCritiqueWiring;
+  }
+
+  async handleCritiqueRequest(req: CritiqueRequest): Promise<void> {
+    await dispatchCritiqueRequest(this.critiqueWiring, req);
   }
 
   async start(onMessage: (msg: AdapterMessage) => void): Promise<void> {

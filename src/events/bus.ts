@@ -22,7 +22,12 @@ export interface EventMap {
   'pattern.detected': { threadId: number; pattern: PatternType; targetAgent: string };
   'convergence.detected': { threadId: number; angle: string };
   'facilitator.intervened': { threadId: number; action: FacilitatorAction; content: string; targetAgent?: string };
-  'deliberation.ended': { threadId: number; conclusion: string; intent: IntentType };
+  'deliberation.ended': {
+    threadId: number;
+    conclusion: string;
+    intent: IntentType;
+    collaborationScore?: import('../council/collaboration-depth.js').DepthScoreResult;
+  };
   'execution.dispatched': { threadId: number; tasks: ExecutionTask[] };
   'execution.completed': { threadId: number; tasks: ExecutionTask[]; diffs: string[] };
   'session.ending': { threadId: number; trigger: 'keyword' | 'timeout' | 'max_turns' };
@@ -33,6 +38,18 @@ export interface EventMap {
   'blind-review.persist-failed': { threadId: number; sessionId: string; error: Error };
   'pvg-rotate.persist-failed': { threadId: number; error: Error };
   'pvg-rotate.revealed': { threadId: number; correct: boolean };
+  'human-critique.requested': { threadId: number; prevAgent: string; nextAgent: string };
+  'human-critique.submitted': {
+    threadId: number;
+    stance: import('../council/human-critique.js').HumanCritiqueStance;
+    content: string;
+    targetAgent: string;
+  };
+  'human-critique.skipped': {
+    threadId: number;
+    reason: import('../council/human-critique-store.js').SkipReason;
+  };
+  'human-critique.invited': { threadId: number; trigger: 'convergence' };
 }
 
 export class EventBus {

@@ -73,4 +73,61 @@ describe('Event Flow Integration', () => {
     await vi.waitFor(() => expect(handler).toHaveBeenCalled(), { timeout: 5000 });
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ intent: 'investigation' }));
   });
+
+  it('end-to-end: critique injected mid-deliberation reaches facilitator summary via collaborationScore', async () => {
+    const { DeliberationHandler } = await import('../../src/council/deliberation.js');
+    const { HumanCritiqueStore } = await import('../../src/council/human-critique-store.js');
+    const { makeWorker, makeMessage } = await import('../council/helpers.js');
+
+    const workers = [makeWorker('agent-a', 'Agent A'), makeWorker('agent-b', 'Agent B')];
+    const deliberationSend = vi.fn().mockResolvedValue(undefined);
+    const critiqueStore = new HumanCritiqueStore();
+
+    // Simulate the adapter layer: submit a critique on the first prompt only
+    let critiqueSent = false;
+    bus.on('human-critique.requested', (p) => {
+      if (!critiqueSent) {
+        critiqueSent = true;
+        critiqueStore.submit(p.threadId, {
+          stance: 'challenge',
+          content: 'cost axis',
+        });
+      } else {
+        critiqueStore.skip(p.threadId, 'user-skip');
+      }
+    });
+
+    let endedPayload: {
+      collaborationScore?: {
+        level: string;
+        axisBreakdown: { interruptionRate: number };
+      };
+    } | null = null;
+    const done = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', (p) => {
+        endedPayload = p as unknown as typeof endedPayload;
+        resolve();
+      });
+    });
+
+    new DeliberationHandler(bus, workers, config, deliberationSend, {
+      critiqueStore,
+      critiqueTimeoutMs: 1_000,
+    });
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId: 99,
+      message: makeMessage('compare monorepo vs polyrepo', 99),
+    });
+    await done;
+
+    expect(endedPayload).not.toBeNull();
+    expect(endedPayload!.collaborationScore).toBeDefined();
+    // Pessimistic scoring means a single submitted critique stays at 'surface'
+    // until agent acknowledgment is implemented. What we verify end-to-end is
+    // that the critique reached the scorer: interruptionRate > 0.
+    expect(endedPayload!.collaborationScore!.axisBreakdown.interruptionRate).toBeGreaterThan(0);
+  });
 });

@@ -48,7 +48,7 @@ export type ResponseClassification = 'opposition' | 'conditional' | 'agreement';
 
 export interface CouncilMessage {
   id: string;
-  role: 'human' | 'agent';
+  role: 'human' | 'agent' | 'human-critique';
   agentId?: string;
   content: string;
   timestamp: number;
@@ -63,6 +63,10 @@ export interface CouncilMessage {
   blindReview?: boolean;
   adversarialMode?: import('./council/adversarial-provers.js').AdversarialMode;
   pvgRotate?: boolean;
+  // Present only when role === 'human-critique'. Populated by
+  // src/council/human-critique.ts makeHumanCritique factory.
+  critiqueStance?: import('./council/human-critique.js').HumanCritiqueStance;
+  critiqueTarget?: string;
 }
 
 export interface AgentConfig {

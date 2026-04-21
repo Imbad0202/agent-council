@@ -1,6 +1,13 @@
 import * as readline from 'node:readline';
 import chalk from 'chalk';
 import type { InputAdapter, OutputAdapter, AdapterMessage, RichMetadata } from './types.js';
+import {
+  dispatchCritiqueRequest,
+  type HumanCritiqueWiring,
+  type CritiqueRequest,
+  type CritiquePromptResult,
+} from '../council/human-critique-wiring.js';
+import type { HumanCritiqueStance } from '../council/human-critique.js';
 
 export interface CliAdapterConfig {
   verbose: boolean;
@@ -17,9 +24,47 @@ export class CliAdapter implements InputAdapter, OutputAdapter {
   verbose: boolean;
   private rl: readline.Interface | null = null;
   private onMessageCallback: ((msg: AdapterMessage) => void) | null = null;
+  private critiqueWiring: HumanCritiqueWiring | undefined;
 
   constructor(config: CliAdapterConfig) {
     this.verbose = config.verbose;
+  }
+
+  setHumanCritiqueWiring(wiring: unknown): void {
+    this.critiqueWiring = wiring as HumanCritiqueWiring;
+  }
+
+  async handleCritiqueRequest(req: CritiqueRequest): Promise<void> {
+    await dispatchCritiqueRequest(this.critiqueWiring, req);
+  }
+
+  // Default prompt implementation — a two-stage readline prompt that first
+  // asks (y/n) whether to critique, then collects stance + content if yes.
+  // Wired in by the bootstrap layer via setHumanCritiqueWiring's promptUser.
+  async defaultPromptUser(req: CritiqueRequest): Promise<CritiquePromptResult> {
+    if (!this.rl) return { kind: 'skipped' };
+    const banner = chalk.magenta(
+      `\n[critique window] ${req.prevAgent} → ${req.nextAgent}. Interject? (c=challenge / q=question / p=addPremise / Enter=skip)`,
+    );
+    const stance = await this.ask(`${banner}\n> `);
+    const stanceMap: Record<string, HumanCritiqueStance | undefined> = {
+      c: 'challenge',
+      q: 'question',
+      p: 'addPremise',
+    };
+    const chosen = stanceMap[stance.trim().toLowerCase()];
+    if (!chosen) return { kind: 'skipped' };
+    const content = await this.ask(chalk.magenta('critique text > '));
+    const trimmed = content.trim();
+    if (!trimmed) return { kind: 'skipped' };
+    return { kind: 'submitted', stance: chosen, content: trimmed };
+  }
+
+  private ask(prompt: string): Promise<string> {
+    return new Promise((resolve) => {
+      if (!this.rl) { resolve(''); return; }
+      this.rl.question(prompt, (answer) => resolve(answer));
+    });
   }
 
   async start(onMessage: (msg: AdapterMessage) => void): Promise<void> {

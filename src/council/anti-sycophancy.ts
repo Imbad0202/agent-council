@@ -61,22 +61,25 @@ List at least 2 potential problems, risks, or blind spots in that position. Then
   }
 
   checkConvergence(): string | null {
-    const { consecutiveLowRounds, disagreementThreshold, challengeAngles } = this.config;
+    if (!this.isConverging()) return null;
+    const { challengeAngles } = this.config;
+    const angle = challengeAngles[Math.floor(Math.random() * challengeAngles.length)];
+    return `Your perspectives are converging. Re-examine this issue from the angle of ${angle}. What are you both missing? What assumption hasn't been challenged?`;
+  }
 
-    if (this.recentClassifications.length < consecutiveLowRounds) {
-      return null;
-    }
+  // Same condition as checkConvergence() but surfaces a boolean so callers
+  // can decide whether to invite a human into the loop instead of (or in
+  // addition to) injecting a machine-generated challenge prompt.
+  shouldInviteHumanCritique(): boolean {
+    return this.isConverging();
+  }
 
+  private isConverging(): boolean {
+    const { consecutiveLowRounds, disagreementThreshold } = this.config;
+    if (this.recentClassifications.length < consecutiveLowRounds) return false;
     const recent = this.recentClassifications.slice(-consecutiveLowRounds);
     const disagreements = recent.filter((c) => c === 'opposition' || c === 'conditional').length;
-    const rate = disagreements / recent.length;
-
-    if (rate < disagreementThreshold) {
-      const angle = challengeAngles[Math.floor(Math.random() * challengeAngles.length)];
-      return `Your perspectives are converging. Re-examine this issue from the angle of ${angle}. What are you both missing? What assumption hasn't been challenged?`;
-    }
-
-    return null;
+    return disagreements / recent.length < disagreementThreshold;
   }
 
   reset(): void {

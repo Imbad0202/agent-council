@@ -24,6 +24,25 @@ import { BlindReviewStore, buildScoringKeyboard } from './blind-review.js';
 import { pickRandomAdversarialRole, buildRotationKeyboard } from './pvg-rotate.js';
 import { PvgRotateStore } from './pvg-rotate-store.js';
 import type { AdversarialRole } from './adversarial-provers.js';
+import type { HumanCritiqueStore, CritiqueOutcome } from './human-critique-store.js';
+import { makeHumanCritique, type HumanCritiqueStance } from './human-critique.js';
+import { buildCritiquePrompt } from './human-critique-prompts.js';
+import { scoreSession, type DepthScoreResult } from './collaboration-depth.js';
+
+const DEFAULT_CRITIQUE_TIMEOUT_MS = 30_000;
+const HUMAN_SENTINEL = '__human__';
+
+interface CritiqueRecordInternal {
+  stance: HumanCritiqueStance;
+  acknowledgedByNextAgent: boolean;
+  introducedNovelAngle: boolean;
+}
+
+export interface CritiqueSessionLog {
+  agentTurns: number;
+  humanCritiques: CritiqueRecordInternal[];
+  stanceShiftsInducedByHuman: number;
+}
 
 type SendFn = (agentId: string, content: string, threadId?: number) => Promise<void>;
 type SendKeyboardFn = (agentId: string, content: string, keyboard: import('grammy').InlineKeyboard, threadId?: number) => Promise<void>;
@@ -34,6 +53,7 @@ interface SessionState {
   turnManager: TurnManager;
   antiSycophancy: AntiSycophancyEngine;
   pendingPatternInjection: { targetAgent: string; prompt: string } | null;
+  critiqueLog: CritiqueSessionLog;
 }
 
 export class DeliberationHandler {
@@ -45,6 +65,8 @@ export class DeliberationHandler {
   private sendKeyboardFn: SendKeyboardFn | undefined;
   private blindReviewStore = new BlindReviewStore();
   private pvgRotateStore: PvgRotateStore;
+  private critiqueStore: HumanCritiqueStore | undefined;
+  private critiqueTimeoutMs: number;
   private sessions: Map<number, SessionState> = new Map();
 
   public getBlindReviewStore(): BlindReviewStore {
@@ -53,6 +75,17 @@ export class DeliberationHandler {
 
   public getPvgRotateStore(): PvgRotateStore {
     return this.pvgRotateStore;
+  }
+
+  public getCritiqueSessionLog(threadId: number): CritiqueSessionLog | undefined {
+    const session = this.sessions.get(threadId);
+    if (!session) return undefined;
+    // Return a shallow copy so callers can't mutate session state.
+    return {
+      agentTurns: session.critiqueLog.agentTurns,
+      humanCritiques: session.critiqueLog.humanCritiques.map((c) => ({ ...c })),
+      stanceShiftsInducedByHuman: session.critiqueLog.stanceShiftsInducedByHuman,
+    };
   }
 
   constructor(
@@ -64,6 +97,8 @@ export class DeliberationHandler {
       facilitatorWorker?: AgentWorker;
       sendKeyboardFn?: SendKeyboardFn;
       pvgRotateStore?: PvgRotateStore;
+      critiqueStore?: HumanCritiqueStore;
+      critiqueTimeoutMs?: number;
     },
   ) {
     this.bus = bus;
@@ -73,6 +108,8 @@ export class DeliberationHandler {
     this.sendFn = sendFn;
     this.sendKeyboardFn = options?.sendKeyboardFn;
     this.pvgRotateStore = options?.pvgRotateStore ?? new PvgRotateStore();
+    this.critiqueStore = options?.critiqueStore;
+    this.critiqueTimeoutMs = options?.critiqueTimeoutMs ?? DEFAULT_CRITIQUE_TIMEOUT_MS;
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
@@ -122,9 +159,44 @@ export class DeliberationHandler {
         turnManager: new TurnManager(this.config.gateway),
         antiSycophancy: new AntiSycophancyEngine(this.config.antiSycophancy),
         pendingPatternInjection: null,
+        critiqueLog: { agentTurns: 0, humanCritiques: [], stanceShiftsInducedByHuman: 0 },
       });
     }
     return this.sessions.get(threadId)!;
+  }
+
+  // Open a critique window before the next agent speaks. Resolves to the
+  // outcome (submitted | skipped) so the caller can inject the critique into
+  // the upcoming agent's context. If critiqueStore is not wired, resolves
+  // immediately with a 'disabled' skip.
+  private async awaitCritique(
+    threadId: number,
+    prevAgent: string,
+    nextAgent: string,
+  ): Promise<CritiqueOutcome> {
+    if (!this.critiqueStore) {
+      return { kind: 'skipped', reason: 'disabled' };
+    }
+    // Open the window FIRST so any synchronous handler of the requested event
+    // (e.g. an adapter that immediately submits/skips) finds a live window.
+    const outcomePromise = this.critiqueStore.open(threadId, {
+      prevAgent,
+      nextAgent,
+      timeoutMs: this.critiqueTimeoutMs,
+    });
+    this.bus.emit('human-critique.requested', { threadId, prevAgent, nextAgent });
+    const outcome = await outcomePromise;
+    if (outcome.kind === 'submitted') {
+      this.bus.emit('human-critique.submitted', {
+        threadId,
+        stance: outcome.stance,
+        content: outcome.content,
+        targetAgent: nextAgent,
+      });
+    } else {
+      this.bus.emit('human-critique.skipped', { threadId, reason: outcome.reason });
+    }
+    return outcome;
   }
 
   private async runDeliberation(
@@ -134,6 +206,12 @@ export class DeliberationHandler {
     complexity: Complexity,
   ): Promise<void> {
     const session = this.getSession(threadId);
+
+    // Reset per-round critique stats. The conversationHistory is retained
+    // across rounds for context continuity, but collaboration-depth metrics
+    // are scoped to THIS round — a user asking a follow-up shouldn't inherit
+    // last round's acceptance ratio.
+    session.critiqueLog = { agentTurns: 0, humanCritiques: [], stanceShiftsInducedByHuman: 0 };
 
     // Push human message to history
     session.conversationHistory.push(message);
@@ -202,8 +280,44 @@ export class DeliberationHandler {
     // Sequential deliberation: first agent responds to human, second agent responds to both
     const responses: Array<{ worker: AgentWorker; role: AgentRole; response: ProviderResponse }> = [];
 
+    let prevAgentId: string = HUMAN_SENTINEL;
     for (const worker of activeWorkers) {
       const role = currentRoles[worker.id];
+
+      // Fire the HITL invite BEFORE opening the critique window so adapters
+      // can surface it to the user in time to actually act on it. The
+      // convergence prompt itself still gets injected later as part of the
+      // challenge-prompt build.
+      if (session.antiSycophancy.shouldInviteHumanCritique()) {
+        this.bus.emit('human-critique.invited', { threadId, trigger: 'convergence' });
+      }
+
+      // Human-critique pause: open a window before this agent speaks. If the
+      // user submits a critique, inject it one-shot into THIS agent's history
+      // + challenge prompt only. We deliberately don't push it onto
+      // session.conversationHistory so a critique targeted at worker.id
+      // doesn't leak into later agents' or later rounds' context.
+      const critiqueOutcome = await this.awaitCritique(threadId, prevAgentId, worker.id);
+      let injectedCritiqueText: string | undefined;
+      let turnCritiqueMsg: CouncilMessage | undefined;
+      if (critiqueOutcome.kind === 'submitted') {
+        turnCritiqueMsg = makeHumanCritique({
+          content: critiqueOutcome.content,
+          stance: critiqueOutcome.stance,
+          targetAgent: worker.id,
+          threadId,
+        });
+        session.critiqueLog.humanCritiques.push({
+          stance: critiqueOutcome.stance,
+          // Pessimistic defaults: flipped to true only when a follow-up slice
+          // adds NLP detection of agent acknowledgment / angle novelty.
+          // Scoring a submitted challenge as accepted+novel before the agent
+          // has even responded inflates depth scores artificially.
+          acknowledgedByNextAgent: false,
+          introducedNovelAngle: false,
+        });
+        injectedCritiqueText = critiqueOutcome.content;
+      }
 
       // Emit agent.responding
       this.bus.emit('agent.responding', { threadId, agentId: worker.id, role });
@@ -225,6 +339,13 @@ export class DeliberationHandler {
           : convergencePrompt;
       }
 
+      if (critiqueOutcome.kind === 'submitted' && injectedCritiqueText) {
+        const critiquePrompt = buildCritiquePrompt(critiqueOutcome.stance, injectedCritiqueText);
+        challengePrompt = challengePrompt
+          ? `${challengePrompt}\n\n${critiquePrompt}`
+          : critiquePrompt;
+      }
+
       // Add pattern-detected injection if targeting this worker
       if (session.pendingPatternInjection?.targetAgent === worker.id) {
         const patternPrompt = session.pendingPatternInjection.prompt;
@@ -234,8 +355,12 @@ export class DeliberationHandler {
         session.pendingPatternInjection = null;
       }
 
+      const turnHistory = turnCritiqueMsg
+        ? [...session.conversationHistory, turnCritiqueMsg]
+        : session.conversationHistory;
+
       const response = await worker.respond(
-        session.conversationHistory,
+        turnHistory,
         role,
         challengePrompt,
         complexity,
@@ -277,6 +402,8 @@ export class DeliberationHandler {
         // Push to history BEFORE next agent — so next agent sees this response
         session.conversationHistory.push(agentMsg);
         session.turnManager.recordAgentTurn(worker.id);
+        session.critiqueLog.agentTurns += 1;
+        prevAgentId = worker.id;
 
         // Send to Telegram immediately
         if (blindCodes) {
@@ -339,6 +466,12 @@ export class DeliberationHandler {
       this.bus.emit('blind-review.started', { threadId, codes });
     }
 
+    const collaborationScore = scoreSession({
+      agentTurns: session.critiqueLog.agentTurns,
+      humanCritiques: session.critiqueLog.humanCritiques,
+      stanceShiftsInducedByHuman: session.critiqueLog.stanceShiftsInducedByHuman,
+    });
+
     // Facilitator summary — ask if user wants another round
     if (!this.facilitatorWorker) {
       // No facilitator, just end
@@ -346,7 +479,7 @@ export class DeliberationHandler {
       const conclusion = lastResponse
         ? lastResponse.response.content.slice(0, 200)
         : 'No responses generated';
-      this.bus.emit('deliberation.ended', { threadId, conclusion, intent });
+      this.bus.emit('deliberation.ended', { threadId, conclusion, intent, collaborationScore });
       return;
     }
 
@@ -356,10 +489,11 @@ export class DeliberationHandler {
       .map((r) => `${r.worker.name}: ${r.response.content}`)
       .join('\n\n---\n\n');
 
+    const scoreLine = formatScoreLine(collaborationScore);
     const summaryMsg: CouncilMessage = {
       id: `facilitator-summary-${Date.now()}`,
       role: 'human',
-      content: `以下是本輪討論：\n\n${recentAgentMsgs}\n\n請用 200 字以內總結雙方觀點的交集與分歧，然後問用戶是否要再進行一輪辯論。用繁體中文回應。`,
+      content: `以下是本輪討論：\n\n${recentAgentMsgs}\n\n${scoreLine}\n\n請用 200 字以內總結雙方觀點的交集與分歧，然後問用戶是否要再進行一輪辯論。最後附上一行「協作深度：${collaborationScore.level}」。用繁體中文回應。`,
       timestamp: Date.now(),
       threadId,
     };
@@ -384,6 +518,18 @@ export class DeliberationHandler {
       threadId,
       conclusion,
       intent,
+      collaborationScore,
     });
   }
+}
+
+function formatScoreLine(score: DepthScoreResult): string {
+  const pct = (n: number): string => (n * 100).toFixed(0);
+  return (
+    `本輪協作深度統計（供參考，不要複述給用戶）：` +
+    `level=${score.level}, ` +
+    `interruptionRate=${pct(score.axisBreakdown.interruptionRate)}%, ` +
+    `acceptanceRatio=${pct(score.axisBreakdown.acceptanceRatio)}%, ` +
+    `divergence=${pct(score.axisBreakdown.divergenceIntroduced)}%`
+  );
 }

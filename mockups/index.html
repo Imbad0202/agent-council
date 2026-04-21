@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Council · 對話庭</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&family=Noto+Sans+TC:wght@300;400;500;700&family=Zen+Maru+Gothic:wght@400;500;700&family=Shippori+Mincho:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* 整體再壓一個色階、對比加強 */
+    --bg: #f3f0ea;             /* 溫暖米底 — 不再全白 */
+    --surface: #e8e3d8;        /* 紙面感 */
+    --surface-2: #ded8ca;      /* 更深的面 */
+    --ink: #1a1a1a;            /* 幾乎純黑 */
+    --ink-soft: #4a4a4a;
+    --ink-mute: #8a8578;
+    --line: #1a1a1a;           /* 線條用深黑強化輪廓 */
+    --line-soft: #cac4b5;
+
+    --accent: #0f4fb0;         /* 加深藍 */
+    --accent-soft: #b8d1f0;
+    --pink:   #eaa5a5;         /* 飽和加強 */
+    --peach:  #e8b88a;
+    --lemon:  #e6d262;
+    --mint:   #9cc8a4;
+    --sky:    #8db8d9;
+    --lilac:  #b5a8d6;
+
+    --radius: 14px;
+    --radius-lg: 22px;
+
+    --space-2: 4px; --space-3: 8px; --space-4: 12px; --space-5: 16px;
+    --space-6: 24px; --space-7: 32px; --space-8: 48px; --space-9: 64px;
+
+    --sans: "Lato","Noto Sans TC","游ゴシック Medium",sans-serif;
+    --round: "Zen Maru Gothic","Noto Sans TC",sans-serif;
+    --mincho: "Shippori Mincho","Noto Serif TC",serif;
+
+    --ease: cubic-bezier(.16,1,.3,1);
+  }
+
+  *,*::before,*::after{ box-sizing: border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--bg);
+    font-size: 15px;
+    line-height: 1.8;
+    letter-spacing: 0.04em;
+    font-feature-settings: "palt";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header.top{
+    border-bottom: 2px solid var(--ink);
+    padding: var(--space-5) var(--space-7);
+    display:flex; align-items:center; justify-content:space-between;
+    background: var(--bg);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .brand{ display:flex; align-items:center; gap: var(--space-4); }
+  .brand-logo{
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--lemon);
+    border: 1.5px solid var(--ink);
+    display:grid; place-items:center;
+    font-family: var(--round);
+    font-weight: 700;
+    color: var(--ink);
+    font-size: 18px;
+  }
+  .brand-name{
+    font-family: var(--round);
+    font-weight: 700;
+    font-size: 20px;
+    color: var(--ink);
+    letter-spacing: 0.02em;
+  }
+  .brand-sub{
+    font-size: 12px;
+    color: var(--ink-mute);
+    letter-spacing: 0.1em;
+    margin-left: var(--space-4);
+  }
+
+  .nav{ display:flex; gap: var(--space-6); align-items:center; }
+  .nav a{
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 14px;
+    letter-spacing: 0.08em;
+    transition: color 160ms var(--ease);
+  }
+  .nav a:hover, .nav a.on{ color: var(--ink); }
+  .nav a.on{ position: relative; }
+  .nav a.on::after{
+    content:""; position:absolute; left:0; right:0; bottom: -6px;
+    height: 2px; background: var(--accent); border-radius: 2px;
+  }
+
+  main{
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: var(--space-8) var(--space-7);
+    display: grid;
+    gap: var(--space-7);
+    grid-template-columns: 1fr;
+  }
+  @media (min-width: 1024px){
+    main{ grid-template-columns: 240px 1fr 260px; align-items: start; }
+  }
+
+  .card{
+    background: #fffdf8;
+    border: 1.5px solid var(--line);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+    box-shadow: 3px 3px 0 var(--line);
+  }
+  .card + .card{ margin-top: var(--space-5); }
+  .card-title{
+    font-family: var(--round);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--ink);
+    letter-spacing: 0.08em;
+    margin: 0 0 var(--space-5) 0;
+    display:flex; align-items:center; gap: var(--space-3);
+  }
+  .card-title .dot{
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .modes{ display:flex; flex-direction: column; gap: var(--space-3); }
+  .mode{
+    all: unset; cursor: pointer;
+    padding: var(--space-4) var(--space-5);
+    border-radius: 999px;
+    background: #fffdf8;
+    border: 1.5px solid var(--ink);
+    box-shadow: 2px 2px 0 var(--ink);
+    color: var(--ink);
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    display:flex; align-items:center; justify-content:space-between;
+    transition: all 180ms var(--ease);
+  }
+  .mode:hover{ transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--ink); }
+  .mode.on{
+    background: var(--lemon);
+    transform: translate(1px,1px);
+    box-shadow: 1px 1px 0 var(--ink);
+  }
+  .mode .icon{ font-size: 13px; opacity: .7; }
+
+  .stat{
+    display:flex; align-items:baseline; justify-content:space-between;
+    padding: var(--space-4) 0;
+  }
+  .stat + .stat{ border-top: 1.5px dashed var(--line); }
+  .stat-label{
+    font-size: 12px; color: var(--ink-mute);
+    letter-spacing: 0.08em;
+  }
+  .stat-val{
+    font-family: var(--round);
+    font-weight: 700;
+    color: var(--ink);
+    font-size: 22px;
+  }
+  .stat-val small{
+    font-family: var(--sans);
+    font-weight: 400;
+    color: var(--ink-mute);
+    font-size: 12px;
+    margin-left: 2px;
+  }
+
+  .center{ display:flex; flex-direction: column; gap: var(--space-7); min-width: 0; }
+
+  .topic-card{
+    background: #fffdf8;
+    border: 1.5px solid var(--ink);
+    box-shadow: 5px 5px 0 var(--ink);
+    border-radius: var(--radius-lg);
+    padding: var(--space-7);
+    position: relative;
+    overflow: hidden;
+  }
+  .topic-card::before{
+    content:""; position: absolute;
+    right: -20px; top: -20px;
+    width: 140px; height: 140px; border-radius: 50%;
+    background: var(--lemon);
+    border: 1.5px solid var(--ink);
+  }
+  .topic-card::after{
+    content:""; position: absolute;
+    right: 80px; bottom: -40px;
+    width: 90px; height: 90px; border-radius: 50%;
+    background: var(--mint);
+    border: 1.5px solid var(--ink);
+  }
+  .topic-label{
+    font-size: 12px;
+    color: var(--ink);
+    letter-spacing: 0.2em;
+    font-weight: 700;
+    margin-bottom: var(--space-3);
+    position: relative;
+    display: inline-block;
+    background: var(--lemon);
+    border: 1.5px solid var(--ink);
+    padding: 3px 12px;
+    border-radius: 999px;
+  }
+  .topic-title{
+    font-family: var(--mincho);
+    font-weight: 500;
+    font-size: clamp(22px, 2.8vw, 28px);
+    color: var(--ink);
+    line-height: 1.6;
+    margin: 0;
+    letter-spacing: 0.02em;
+    position: relative;
+  }
+
+  .chars{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-5);
+  }
+  .char{
+    text-align: center;
+    padding: var(--space-5) var(--space-5) var(--space-4);
+    border-radius: var(--radius-lg);
+    background: #fffdf8;
+    border: 1.5px solid var(--line);
+    box-shadow: 3px 3px 0 var(--line);
+    transition: transform 280ms var(--ease), box-shadow 280ms var(--ease);
+    position: relative;
+  }
+  .char.speaking{
+    transform: translate(-2px, -6px);
+    box-shadow: 6px 9px 0 var(--accent);
+    background: #fffaee;
+  }
+  .char.shaken{ animation: shake 380ms var(--ease); }
+  @keyframes shake{
+    0%{transform:translate(0,-6px)}
+    25%{transform:translate(-5px,-4px) rotate(-2deg)}
+    50%{transform:translate(5px,-8px) rotate(1.5deg)}
+    75%{transform:translate(-3px,-5px) rotate(-1deg)}
+    100%{transform:translate(0,-6px)}
+  }
+
+  .avatar{
+    width: 140px; height: 140px;
+    margin: 0 auto var(--space-4);
+    display: grid; place-items: center;
+    position: relative;
+    background: var(--bg-face, var(--sky));
+    border-radius: 50%;
+    border: 2px solid var(--ink);
+    overflow: hidden;
+  }
+  .avatar img{
+    width: 90%;
+    height: 90%;
+    object-fit: contain;
+    object-position: center center;
+  }
+
+  .char-name{
+    font-family: var(--round);
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--ink);
+    letter-spacing: 0.04em;
+  }
+  .char-role{
+    font-size: 11px;
+    color: var(--ink-mute);
+    letter-spacing: 0.1em;
+    margin-top: var(--space-2);
+  }
+  .char.speaking .char-role{ color: var(--accent); }
+
+  .char-badge{
+    position: absolute; top: -10px; right: 14px;
+    font-size: 11px;
+    background: var(--lemon);
+    border: 1.5px solid var(--ink);
+    color: var(--ink);
+    padding: 3px 12px;
+    border-radius: 999px;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    transform: rotate(3deg);
+  }
+  .char.hidden-role .char-badge{
+    background: var(--ink);
+    color: var(--lemon);
+  }
+
+  .bubble-wrap{
+    display:flex; flex-direction: column; gap: var(--space-4);
+  }
+  .bubble-meta{
+    display:flex; align-items:baseline; justify-content:space-between;
+    padding: 0 var(--space-4);
+  }
+  .speaker{
+    font-family: var(--round);
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--ink);
+    letter-spacing: 0.04em;
+  }
+  .speaker .tag{
+    display:inline-block;
+    margin-left: var(--space-3);
+    font-family: var(--sans);
+    font-weight: 400;
+    font-size: 11px;
+    color: var(--ink-mute);
+    padding: 2px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    letter-spacing: 0.08em;
+  }
+  .turn{
+    font-size: 11px;
+    color: var(--ink-mute);
+    letter-spacing: 0.1em;
+  }
+
+  .bubble{
+    position: relative;
+    background: #fffdf8;
+    border: 1.5px solid var(--ink);
+    border-radius: var(--radius-lg);
+    padding: var(--space-7);
+    font-size: 15.5px;
+    line-height: 1.9;
+    color: var(--ink);
+    box-shadow: 4px 4px 0 var(--ink);
+  }
+  .bubble::before{
+    content:"";
+    position: absolute;
+    top: -12px; left: 40px;
+    width: 22px; height: 22px;
+    background: #fffdf8;
+    border-left: 1.5px solid var(--ink);
+    border-top: 1.5px solid var(--ink);
+    transform: rotate(45deg);
+  }
+  .bubble p{ margin: 0 0 var(--space-4); }
+  .bubble p:last-child{ margin-bottom: 0; }
+  .bubble em{
+    font-style: normal;
+    background: linear-gradient(transparent 62%, var(--lemon) 62%);
+    padding: 0 2px;
+  }
+  .caret{
+    display:inline-block; width: 2px; height: 16px;
+    background: var(--accent); vertical-align: -3px; margin-left: 2px;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink{ 50%{ opacity: 0; } }
+
+  .actions{
+    display:flex; flex-wrap: wrap; gap: var(--space-3);
+    padding: var(--space-4) var(--space-4) 0;
+  }
+  .btn{
+    all: unset; cursor: pointer;
+    padding: 10px 22px;
+    border-radius: 999px;
+    font-size: 13.5px;
+    letter-spacing: 0.06em;
+    background: #fffdf8;
+    border: 1.5px solid var(--ink);
+    color: var(--ink);
+    box-shadow: 2px 2px 0 var(--ink);
+    transition: all 160ms var(--ease);
+  }
+  .btn:hover{ transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--ink); }
+  .btn:active{ transform: translate(1px,1px); box-shadow: 0 0 0 var(--ink); }
+  .btn-primary{
+    background: var(--accent); color: #fff;
+  }
+  .btn-primary:hover{ background: #0a3d8a; color: #fff; }
+  .btn-warn{
+    background: var(--pink); color: var(--ink);
+  }
+  .btn-warn:hover{ background: #d98585; color: var(--ink); }
+
+  .vote-card{
+    background: var(--surface);
+    border: 2px dashed var(--ink);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+  }
+  .vote-hint{
+    font-size: 13px;
+    color: var(--ink-soft);
+    letter-spacing: 0.04em;
+    margin: 0 0 var(--space-5) 0;
+    line-height: 1.8;
+  }
+  .vote-grid{
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-4);
+  }
+  .vote{
+    all: unset; cursor: pointer;
+    padding: var(--space-5);
+    border-radius: var(--radius);
+    background: #fffdf8;
+    border: 1.5px solid var(--ink);
+    box-shadow: 3px 3px 0 var(--ink);
+    display:flex; flex-direction: column; gap: var(--space-3);
+    transition: all 220ms var(--ease);
+  }
+  .vote:hover{
+    transform: translate(-2px,-2px);
+    box-shadow: 5px 5px 0 var(--ink);
+  }
+  .vote:active{ transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--ink); }
+  .vote.picked{
+    background: var(--lemon);
+    transform: translate(1px,1px);
+    box-shadow: 1px 1px 0 var(--ink);
+  }
+  .vote-head{ display:flex; align-items:center; gap: var(--space-3); }
+  .vote-icon{
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 1.5px solid var(--ink);
+    display: grid; place-items: center;
+    flex-shrink: 0;
+    font-size: 14px;
+    color: var(--ink);
+  }
+  .vote-name{
+    font-family: var(--round);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--ink);
+    letter-spacing: 0.04em;
+  }
+  .vote-desc{
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.8;
+  }
+
+  footer.composer{
+    border-top: 2px solid var(--ink);
+    background: var(--bg);
+    padding: var(--space-5) var(--space-7);
+    position: sticky; bottom: 0; z-index: 10;
+  }
+  .composer-inner{
+    max-width: 1280px; margin: 0 auto;
+    display: grid; grid-template-columns: 1fr auto; gap: var(--space-4);
+  }
+  .composer-input{
+    all: unset;
+    background: #fffdf8;
+    border: 1.5px solid var(--ink);
+    box-shadow: 2px 2px 0 var(--ink);
+    border-radius: 999px;
+    padding: var(--space-4) var(--space-6);
+    font-family: var(--sans);
+    font-size: 15px;
+    color: var(--ink);
+  }
+  .composer-input::placeholder{ color: var(--ink-mute); }
+  .composer-input:focus{ box-shadow: 3px 3px 0 var(--ink); }
+
+  .objection{
+    position: fixed; inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 100; pointer-events: none;
+    background: rgba(255,255,255,.75);
+    backdrop-filter: blur(2px);
+  }
+  .objection.show{ display: flex; pointer-events: auto; }
+  .objection-card{
+    background: var(--bg);
+    padding: var(--space-8) var(--space-9);
+    border-radius: 40px;
+    border: 2px solid var(--ink);
+    box-shadow: 8px 8px 0 var(--ink);
+    transform: rotate(-4deg) scale(0.5);
+    opacity: 0;
+    animation: pop 0.7s var(--ease) forwards;
+    text-align: center;
+  }
+  .objection-bubble{
+    font-family: var(--round);
+    font-weight: 700;
+    font-size: clamp(52px, 9vw, 108px);
+    color: var(--ink);
+    line-height: 1;
+    letter-spacing: 0.04em;
+  }
+  .objection-sub{
+    font-size: 13px;
+    color: var(--ink-soft);
+    letter-spacing: 0.16em;
+    margin-top: var(--space-4);
+  }
+  @keyframes pop{
+    0%{ transform: rotate(-4deg) scale(0.5); opacity: 0;}
+    50%{ transform: rotate(-4deg) scale(1.08); opacity: 1;}
+    70%{ transform: rotate(-4deg) scale(0.98);}
+    100%{ transform: rotate(-4deg) scale(1); opacity: 1;}
+  }
+
+  /* right panel notes */
+  .note-row{
+    display: flex; gap: var(--space-4);
+    padding: var(--space-4) 0;
+  }
+  .note-row + .note-row{ border-top: 1.5px dashed var(--line); }
+  .note-row .who{
+    flex-shrink: 0; width: 56px;
+    font-family: var(--round);
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .note-row .what{
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.7;
+  }
+  .highlight{ background: linear-gradient(transparent 60%, var(--lemon) 60%); padding: 0 2px; }
+
+  /* attribution footer */
+  .attr{
+    text-align: center;
+    font-size: 11px;
+    color: var(--ink-mute);
+    padding: var(--space-4) var(--space-7);
+    letter-spacing: 0.08em;
+  }
+  .attr a{ color: var(--ink-soft); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <div class="brand-logo">C</div>
+    <span class="brand-name">Council</span>
+    <span class="brand-sub">Session 0427 · Round 3/5</span>
+  </div>
+  <nav class="nav">
+    <a href="#" class="on">Discuss</a>
+    <a href="#">Memory</a>
+    <a href="#">History</a>
+    <a href="#">Settings</a>
+  </nav>
+</header>
+
+<main>
+
+  <aside>
+    <div class="card">
+      <h3 class="card-title"><span class="dot"></span>對話模式</h3>
+      <div class="modes">
+        <button class="mode"><span>自由討論</span><span class="icon">○</span></button>
+        <button class="mode"><span>盲評</span><span class="icon">◐</span></button>
+        <button class="mode"><span>論證測試</span><span class="icon">◑</span></button>
+        <button class="mode on"><span>角色輪轉</span><span class="icon">●</span></button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="card-title"><span class="dot" style="background:var(--mint)"></span>本場紀錄</h3>
+      <div class="stat">
+        <span class="stat-label">ROUND</span>
+        <span class="stat-val">3<small>/5</small></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">HIT RATE</span>
+        <span class="stat-val">62<small>%</small></span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">WEAK</span>
+        <span class="stat-val" style="font-size:14px">deceptive</span>
+      </div>
+    </div>
+  </aside>
+
+  <section class="center">
+
+    <div class="topic-card">
+      <div class="topic-label">◆ 今日論題</div>
+      <h1 class="topic-title">Rawls 的「無知之幕」能否承載跨世代的正義？</h1>
+    </div>
+
+    <div class="chars">
+      <div class="char" style="--bg-face: var(--sky)">
+        <div class="avatar"><img src="assets/characters/host.png" alt="Host"></div>
+        <div class="char-name">主持人</div>
+        <div class="char-role">facilitator</div>
+      </div>
+
+      <div class="char speaking" style="--bg-face: var(--peach)">
+        <div class="char-badge">發言中</div>
+        <div class="avatar"><img src="assets/characters/binbin.png" alt="Binbin"></div>
+        <div class="char-name">賓賓</div>
+        <div class="char-role">advocate · opus 4.7</div>
+      </div>
+
+      <div class="char hidden-role" style="--bg-face: var(--lilac)">
+        <div class="char-badge">角色隱藏</div>
+        <div class="avatar"><img src="assets/characters/huahua.png" alt="Huahua"></div>
+        <div class="char-name">花花</div>
+        <div class="char-role">??? · sonnet 4.6</div>
+      </div>
+    </div>
+
+    <div class="bubble-wrap">
+      <div class="bubble-meta">
+        <div class="speaker">賓賓<span class="tag">complexity · high</span></div>
+        <div class="turn">TURN 03 · 21:14</div>
+      </div>
+      <div class="bubble">
+        <p>無知之幕的本意不是要我們忘掉所有對自己的認識，而是把<em>「我會落在哪裡」</em>從決策的支點上挪開。一旦這個支點挪開，跨世代的問題就不是「我為未來人讓利多少」，而是<em>「若我隨機落入任一世代，我會接受什麼制度」</em>。</p>
+        <p>但我必須誠實標出我的不確定：Rawls 自己對此最猶豫。他在 §44 把跨世代擴張稱為「最不令人滿意的部分」<span class="caret"></span></p>
+      </div>
+      <div class="actions">
+        <button class="btn btn-warn">◆ 提出異議</button>
+        <button class="btn">追問</button>
+        <button class="btn">標記矛盾</button>
+        <span style="flex:1"></span>
+        <button class="btn btn-primary">下一位 →</button>
+      </div>
+    </div>
+
+    <div class="vote-card">
+      <h3 class="card-title"><span class="dot" style="background:var(--lilac)"></span>指認被隱藏的角色</h3>
+      <p class="vote-hint">本回合有一位 agent 被秘密指派為 PVG 對抗角色。<br>在揭曉前，僅憑論證判斷是哪一種。</p>
+      <div class="vote-grid">
+        <button class="vote">
+          <div class="vote-head">
+            <div class="vote-icon" style="background:var(--pink)">○</div>
+            <span class="vote-name">Sneaky</span>
+          </div>
+          <span class="vote-desc">前提被悄悄偷換的似是而非論證</span>
+        </button>
+        <button class="vote">
+          <div class="vote-head">
+            <div class="vote-icon" style="background:var(--peach)">◐</div>
+            <span class="vote-name">Biased</span>
+          </div>
+          <span class="vote-desc">以 anchoring / confirmation 框架包裝</span>
+        </button>
+        <button class="vote">
+          <div class="vote-head">
+            <div class="vote-icon" style="background:var(--lemon)">◑</div>
+            <span class="vote-name">Deceptive</span>
+          </div>
+          <span class="vote-desc">事實全對，但結論超出證據所能支持</span>
+        </button>
+        <button class="vote">
+          <div class="vote-head">
+            <div class="vote-icon" style="background:var(--mint)">●</div>
+            <span class="vote-name">Calibrated</span>
+          </div>
+          <span class="vote-desc">標明信心區間，誠實申報至少一個 unknown</span>
+        </button>
+      </div>
+    </div>
+
+  </section>
+
+  <aside>
+    <div class="card">
+      <h3 class="card-title"><span class="dot" style="background:var(--peach)"></span>議事摘要</h3>
+      <div class="note-row">
+        <div class="who">主持人</div>
+        <div class="what">開題，聚焦於 <span class="highlight">原初狀態</span> 的設計意圖</div>
+      </div>
+      <div class="note-row">
+        <div class="who">賓賓</div>
+        <div class="what">擁護無知之幕的 <span class="highlight">跨情境汎化</span></div>
+      </div>
+      <div class="note-row">
+        <div class="who">花花</div>
+        <div class="what">對 <span class="highlight">跨世代擴張</span> 提出疑義</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="card-title"><span class="dot" style="background:var(--lemon)"></span>浮現概念</h3>
+      <div class="stat">
+        <span class="stat-label">高頻</span>
+        <span class="stat-val" style="font-size:15px; font-family: var(--mincho); font-weight: 500;">原初情境</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">爭點</span>
+        <span class="stat-val" style="font-size:15px; font-family: var(--mincho); font-weight: 500;">代際同意</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">未解</span>
+        <span class="stat-val" style="font-size:15px; font-family: var(--mincho); font-weight: 500;">永續門檻</span>
+      </div>
+    </div>
+  </aside>
+
+</main>
+
+<footer class="composer">
+  <div class="composer-inner">
+    <input class="composer-input" placeholder="向議事庭提問或追問⋯" />
+    <button class="btn btn-primary">送出</button>
+  </div>
+</footer>
+
+<div class="attr">Illustrations · <a href="https://soco-st.com/" target="_blank" rel="noopener">ソコスト (soco-st.com)</a></div>
+
+<div class="objection" id="objection">
+  <div class="objection-card">
+    <div class="objection-bubble">異議！</div>
+    <div class="objection-sub">OBJECTION · 論點有待重新檢視</div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.mode').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.mode').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+  }));
+
+  const overlay = document.getElementById('objection');
+  document.querySelector('.btn-warn').addEventListener('click', () => {
+    overlay.classList.add('show');
+    const sp = document.querySelector('.char.speaking');
+    sp.classList.remove('shaken'); void sp.offsetWidth; sp.classList.add('shaken');
+    setTimeout(() => overlay.classList.remove('show'), 1400);
+  });
+  overlay.addEventListener('click', () => overlay.classList.remove('show'));
+
+  document.querySelector('.btn-primary').addEventListener('click', () => {
+    const chars = document.querySelectorAll('.char');
+    const cur = document.querySelector('.char.speaking');
+    const i = Array.from(chars).indexOf(cur);
+    cur.classList.remove('speaking');
+    chars[(i+1) % chars.length].classList.add('speaking');
+  });
+
+  document.querySelectorAll('.vote').forEach(v => v.addEventListener('click', () => {
+    document.querySelectorAll('.vote').forEach(x => x.classList.remove('picked'));
+    v.classList.add('picked');
+  }));
+</script>
+
+</body>
+</html>
