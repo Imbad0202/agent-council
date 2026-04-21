@@ -1,5 +1,5 @@
 import { BotManager } from '../telegram/bot.js';
-import type { BlindReviewWiring, PvgRotateWiring } from '../telegram/bot.js';
+import type { BlindReviewWiring, PvgRotateWiring, CritiqueUiWiring } from '../telegram/bot.js';
 import { InlineKeyboard } from 'grammy';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import type { InputAdapter, OutputAdapter, AdapterMessage, RichMetadata } from './types.js';
@@ -15,12 +15,20 @@ export interface TelegramAdapterConfig {
   listenerAgentId: string;
 }
 
+// Narrow structural interface so src/index.ts can feature-detect the Telegram
+// critique UI path without importing the full TelegramAdapter class. Rename
+// the method on the class and this breaks at compile time.
+export interface CritiqueUiAdapter {
+  setCritiqueUiWiring(wiring: CritiqueUiWiring): void;
+}
+
 export class TelegramAdapter implements InputAdapter, OutputAdapter {
   private botManager: BotManager;
   private config: TelegramAdapterConfig;
   private blindReviewWiring: BlindReviewWiring | undefined;
   private pvgRotateWiring: PvgRotateWiring | undefined;
   private critiqueWiring: HumanCritiqueWiring | undefined;
+  private critiqueUiWiring: CritiqueUiWiring | undefined;
 
   constructor(config: TelegramAdapterConfig) {
     this.config = config;
@@ -43,6 +51,14 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
     this.critiqueWiring = wiring as HumanCritiqueWiring;
   }
 
+  setCritiqueUiWiring(wiring: CritiqueUiWiring): void {
+    this.critiqueUiWiring = {
+      state: wiring.state,
+      sendFn: wiring.sendFn ?? ((agentId, content, threadId) =>
+        this.botManager.sendMessage(agentId, 'Council', content, threadId)),
+    };
+  }
+
   async handleCritiqueRequest(req: CritiqueRequest): Promise<void> {
     await dispatchCritiqueRequest(this.critiqueWiring, req);
   }
@@ -57,6 +73,7 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
       },
       this.blindReviewWiring,
       this.pvgRotateWiring,
+      this.critiqueUiWiring,
     );
     await listenerBot.api.deleteWebhook({ drop_pending_updates: true });
     for (let attempt = 1; attempt <= 6; attempt++) {
@@ -97,6 +114,7 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
   }
 
   async stop(): Promise<void> {
+    this.critiqueUiWiring?.state.drain();
     const listenerBot = this.botManager.getListenerBot();
     await listenerBot.stop();
   }

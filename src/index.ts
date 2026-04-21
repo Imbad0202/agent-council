@@ -16,6 +16,13 @@ import { PvgRotateStore } from './council/pvg-rotate-store.js';
 import { PvgRotateDB } from './council/pvg-rotate-db.js';
 import { HumanCritiqueStore } from './council/human-critique-store.js';
 import type { HumanCritiqueWiring, CritiquePromptResult } from './council/human-critique-wiring.js';
+import { PendingCritiqueState } from './telegram/critique-state.js';
+import {
+  createTelegramCritiquePromptUser,
+  CRITIQUE_PROMPT_AGENT_ID,
+} from './telegram/critique-callback.js';
+import type { CritiqueUiAdapter } from './adapters/telegram.js';
+import type { DefaultCritiquePromptAdapter } from './adapters/cli.js';
 import { FacilitatorAgent } from './council/facilitator.js';
 import { ActiveRecall } from './memory/active-recall.js';
 import { ExecutionDispatcher } from './execution/dispatcher.js';
@@ -24,6 +31,39 @@ import { parseArgs, createAdapter } from './adapters/factory.js';
 import { buildRichMetadata } from './adapters/metadata.js';
 import type { AdapterFactoryConfig } from './adapters/factory.js';
 import type { LLMProvider } from './types.js';
+
+function hasDefaultPromptUser(a: unknown): a is DefaultCritiquePromptAdapter {
+  return typeof (a as DefaultCritiquePromptAdapter).defaultPromptUser === 'function';
+}
+
+function hasSetCritiqueUiWiring(a: unknown): a is CritiqueUiAdapter {
+  return typeof (a as CritiqueUiAdapter).setCritiqueUiWiring === 'function';
+}
+
+// Pick the right promptUser for the given adapter:
+// - CLI adapter: readline-based two-stage picker
+// - Telegram adapter: InlineKeyboard 4-button flow (factory sets up its own
+//   PendingCritiqueState and registers it on the adapter)
+// - Anything else: always-skip so deliberation doesn't stall
+function buildPromptUserForAdapter(
+  adapter: ReturnType<typeof createAdapter>,
+): HumanCritiqueWiring['promptUser'] {
+  if (hasDefaultPromptUser(adapter)) {
+    return adapter.defaultPromptUser.bind(adapter);
+  }
+  if (hasSetCritiqueUiWiring(adapter) && adapter.sendMessageWithKeyboard) {
+    const state = new PendingCritiqueState();
+    adapter.setCritiqueUiWiring({ state });
+    const sendKeyboardFn = adapter.sendMessageWithKeyboard.bind(adapter);
+    return createTelegramCritiquePromptUser({
+      state,
+      sendKeyboard: (text, keyboard, threadId) =>
+        sendKeyboardFn(CRITIQUE_PROMPT_AGENT_ID, text, keyboard, threadId),
+      timeoutMs: 30_000,
+    });
+  }
+  return async (): Promise<CritiquePromptResult> => ({ kind: 'skipped' });
+}
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -180,14 +220,10 @@ async function main() {
 
   // Wire human-critique commands.
   // CLI: defaultPromptUser drives readline stance picker.
-  // Telegram: InlineKeyboard flow is a follow-up; for now always-skip so the
-  // deliberation loop doesn't stall on Telegram users who haven't been
-  // onboarded to the critique commands yet.
+  // Telegram: InlineKeyboard flow — four buttons (challenge/question/addPremise/skip)
+  // followed by a free-text message for stance submissions.
   if (adapter.setHumanCritiqueWiring && adapter.handleCritiqueRequest) {
-    const cliAdapter = adapter as { defaultPromptUser?: HumanCritiqueWiring['promptUser'] };
-    const promptUser: HumanCritiqueWiring['promptUser'] = cliAdapter.defaultPromptUser
-      ? cliAdapter.defaultPromptUser.bind(adapter)
-      : async (): Promise<CritiquePromptResult> => ({ kind: 'skipped' });
+    const promptUser = buildPromptUserForAdapter(adapter);
     adapter.setHumanCritiqueWiring({ store: critiqueStore, promptUser });
     bus.on('human-critique.requested', async (req) => {
       try {
