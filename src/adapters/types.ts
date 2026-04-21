@@ -26,6 +26,12 @@ export interface OutputAdapter {
   sendMessageWithKeyboard?: (agentId: string, content: string, keyboard: unknown, threadId?: number) => Promise<void>;
   setBlindReviewWiring?: (wiring: unknown) => void;
   setPvgRotateWiring?: (wiring: unknown) => void;
+  setHumanCritiqueWiring?: (wiring: unknown) => void;
+  handleCritiqueRequest?: (req: {
+    threadId: number;
+    prevAgent: string;
+    nextAgent: string;
+  }) => Promise<void>;
 }
 
 export type Adapter = InputAdapter & OutputAdapter;

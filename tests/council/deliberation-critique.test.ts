@@ -161,6 +161,52 @@ describe('DeliberationHandler — human critique integration', () => {
     expect((workers[1].respond as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
   });
 
+  it('emits human-critique.invited when AntiSycophancyEngine detects convergence', async () => {
+    const invited: EventMap['human-critique.invited'][] = [];
+    bus.on('human-critique.invited', (p) => invited.push(p));
+
+    // Seed two responses that both trigger 'agreement' classification.
+    workers[0].respond = vi.fn().mockResolvedValue({
+      content: '完全同意上一位的觀點，no disagreement。',
+      confidence: 0.8,
+      references: [],
+      tokensUsed: { input: 0, output: 0 },
+    });
+    workers[1].respond = vi.fn().mockResolvedValue({
+      content: '我也同意，exactly 說得對。',
+      confidence: 0.8,
+      references: [],
+      tokensUsed: { input: 0, output: 0 },
+    });
+
+    // Tight config: convergence triggers after 2 consecutive low-disagreement rounds
+    const tightConfig = {
+      ...minConfig,
+      antiSycophancy: { disagreementThreshold: 0.5, consecutiveLowRounds: 2, challengeAngles: ['x'] },
+    };
+
+    new DeliberationHandler(bus, workers, tightConfig, sendFn);
+
+    // Kick off two deliberations back-to-back on same thread so AntiSycophancyEngine
+    // accumulates enough agreement classifications.
+    for (let i = 0; i < 2; i++) {
+      const done = new Promise<void>((resolve) => {
+        bus.once('deliberation.ended', () => resolve());
+      });
+      bus.emit('intent.classified', {
+        intent: 'deliberation',
+        complexity: 'medium',
+        threadId: 11,
+        message: makeMessage(`q${i}`, 11),
+      });
+      await done;
+    }
+
+    expect(invited.length).toBeGreaterThanOrEqual(1);
+    expect(invited[0].threadId).toBe(11);
+    expect(invited[0].trigger).toBe('convergence');
+  });
+
   it('submitted critique is acknowledged in the scorer-ready session log', async () => {
     bus.on('human-critique.requested', (p) => {
       critiqueStore.submit(p.threadId, {

@@ -22,7 +22,12 @@ export interface EventMap {
   'pattern.detected': { threadId: number; pattern: PatternType; targetAgent: string };
   'convergence.detected': { threadId: number; angle: string };
   'facilitator.intervened': { threadId: number; action: FacilitatorAction; content: string; targetAgent?: string };
-  'deliberation.ended': { threadId: number; conclusion: string; intent: IntentType };
+  'deliberation.ended': {
+    threadId: number;
+    conclusion: string;
+    intent: IntentType;
+    collaborationScore?: import('../council/collaboration-depth.js').DepthScoreResult;
+  };
   'execution.dispatched': { threadId: number; tasks: ExecutionTask[] };
   'execution.completed': { threadId: number; tasks: ExecutionTask[]; diffs: string[] };
   'session.ending': { threadId: number; trigger: 'keyword' | 'timeout' | 'max_turns' };

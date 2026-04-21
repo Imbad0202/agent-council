@@ -27,6 +27,7 @@ import type { AdversarialRole } from './adversarial-provers.js';
 import type { HumanCritiqueStore, CritiqueOutcome } from './human-critique-store.js';
 import { makeHumanCritique, type HumanCritiqueStance } from './human-critique.js';
 import { buildCritiquePrompt } from './human-critique-prompts.js';
+import { scoreSession, type DepthScoreResult } from './collaboration-depth.js';
 
 const DEFAULT_CRITIQUE_TIMEOUT_MS = 30_000;
 const HUMAN_SENTINEL = '__human__';
@@ -319,6 +320,7 @@ export class DeliberationHandler {
         challengePrompt = challengePrompt
           ? `${challengePrompt}\n\n${convergencePrompt}`
           : convergencePrompt;
+        this.bus.emit('human-critique.invited', { threadId, trigger: 'convergence' });
       }
 
       if (critiqueOutcome.kind === 'submitted' && injectedCritiqueText) {
@@ -444,6 +446,12 @@ export class DeliberationHandler {
       this.bus.emit('blind-review.started', { threadId, codes });
     }
 
+    const collaborationScore = scoreSession({
+      agentTurns: session.critiqueLog.agentTurns,
+      humanCritiques: session.critiqueLog.humanCritiques,
+      stanceShiftsInducedByHuman: session.critiqueLog.stanceShiftsInducedByHuman,
+    });
+
     // Facilitator summary — ask if user wants another round
     if (!this.facilitatorWorker) {
       // No facilitator, just end
@@ -451,7 +459,7 @@ export class DeliberationHandler {
       const conclusion = lastResponse
         ? lastResponse.response.content.slice(0, 200)
         : 'No responses generated';
-      this.bus.emit('deliberation.ended', { threadId, conclusion, intent });
+      this.bus.emit('deliberation.ended', { threadId, conclusion, intent, collaborationScore });
       return;
     }
 
@@ -461,10 +469,11 @@ export class DeliberationHandler {
       .map((r) => `${r.worker.name}: ${r.response.content}`)
       .join('\n\n---\n\n');
 
+    const scoreLine = formatScoreLine(collaborationScore);
     const summaryMsg: CouncilMessage = {
       id: `facilitator-summary-${Date.now()}`,
       role: 'human',
-      content: `以下是本輪討論：\n\n${recentAgentMsgs}\n\n請用 200 字以內總結雙方觀點的交集與分歧，然後問用戶是否要再進行一輪辯論。用繁體中文回應。`,
+      content: `以下是本輪討論：\n\n${recentAgentMsgs}\n\n${scoreLine}\n\n請用 200 字以內總結雙方觀點的交集與分歧，然後問用戶是否要再進行一輪辯論。最後附上一行「協作深度：${collaborationScore.level}」。用繁體中文回應。`,
       timestamp: Date.now(),
       threadId,
     };
@@ -489,6 +498,18 @@ export class DeliberationHandler {
       threadId,
       conclusion,
       intent,
+      collaborationScore,
     });
   }
+}
+
+function formatScoreLine(score: DepthScoreResult): string {
+  const pct = (n: number): string => (n * 100).toFixed(0);
+  return (
+    `本輪協作深度統計（供參考，不要複述給用戶）：` +
+    `level=${score.level}, ` +
+    `interruptionRate=${pct(score.axisBreakdown.interruptionRate)}%, ` +
+    `acceptanceRatio=${pct(score.axisBreakdown.acceptanceRatio)}%, ` +
+    `divergence=${pct(score.axisBreakdown.divergenceIntroduced)}%`
+  );
 }
