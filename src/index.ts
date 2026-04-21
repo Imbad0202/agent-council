@@ -14,6 +14,8 @@ import { DeliberationHandler } from './council/deliberation.js';
 import { BlindReviewDB } from './council/blind-review-db.js';
 import { PvgRotateStore } from './council/pvg-rotate-store.js';
 import { PvgRotateDB } from './council/pvg-rotate-db.js';
+import { HumanCritiqueStore } from './council/human-critique-store.js';
+import type { HumanCritiqueWiring, CritiquePromptResult } from './council/human-critique-wiring.js';
 import { FacilitatorAgent } from './council/facilitator.js';
 import { ActiveRecall } from './memory/active-recall.js';
 import { ExecutionDispatcher } from './execution/dispatcher.js';
@@ -121,6 +123,7 @@ async function main() {
   // Deliberation layer
   const pvgRotateStore = new PvgRotateStore();
   const pvgRotateDB = new PvgRotateDB(resolve('data/council.db'));
+  const critiqueStore = new HumanCritiqueStore();
   const deliberationHandler = new DeliberationHandler(
     bus,
     peerWorkers,
@@ -132,6 +135,7 @@ async function main() {
         ? adapter.sendMessageWithKeyboard.bind(adapter)
         : undefined,
       pvgRotateStore,
+      critiqueStore,
     },
   );
   console.log('DeliberationHandler initialized');
@@ -172,6 +176,29 @@ async function main() {
         return cfg?.models ?? null;
       },
     });
+  }
+
+  // Wire human-critique commands.
+  // CLI: defaultPromptUser drives readline stance picker.
+  // Telegram: InlineKeyboard flow is a follow-up; for now always-skip so the
+  // deliberation loop doesn't stall on Telegram users who haven't been
+  // onboarded to the critique commands yet.
+  if (adapter.setHumanCritiqueWiring && adapter.handleCritiqueRequest) {
+    const cliAdapter = adapter as { defaultPromptUser?: HumanCritiqueWiring['promptUser'] };
+    const promptUser: HumanCritiqueWiring['promptUser'] = cliAdapter.defaultPromptUser
+      ? cliAdapter.defaultPromptUser.bind(adapter)
+      : async (): Promise<CritiquePromptResult> => ({ kind: 'skipped' });
+    adapter.setHumanCritiqueWiring({ store: critiqueStore, promptUser });
+    bus.on('human-critique.requested', async (req) => {
+      try {
+        await adapter.handleCritiqueRequest!(req);
+      } catch (err) {
+        // Adapter-side failure falls back to skip so the loop doesn't hang.
+        critiqueStore.skip(req.threadId, 'user-skip');
+        console.error('[human-critique] adapter failure, skipping window:', err);
+      }
+    });
+    console.log('HumanCritiqueStore + adapter wiring initialized');
   }
 
   // Participation manager

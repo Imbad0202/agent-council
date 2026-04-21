@@ -69,6 +69,10 @@ export class AgentWorker {
       if (msg.role === 'human') {
         return { role: 'user' as const, content: msg.content };
       }
+      if (msg.role === 'human-critique') {
+        const label = `[Human critique${msg.critiqueStance ? ` · ${msg.critiqueStance}` : ''}]`;
+        return { role: 'user' as const, content: `${label}: ${msg.content}` };
+      }
       if (msg.agentId === this.id) {
         return { role: 'assistant' as const, content: msg.content };
       }

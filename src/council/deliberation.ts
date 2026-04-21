@@ -207,6 +207,12 @@ export class DeliberationHandler {
   ): Promise<void> {
     const session = this.getSession(threadId);
 
+    // Reset per-round critique stats. The conversationHistory is retained
+    // across rounds for context continuity, but collaboration-depth metrics
+    // are scoped to THIS round — a user asking a follow-up shouldn't inherit
+    // last round's acceptance ratio.
+    session.critiqueLog = { agentTurns: 0, humanCritiques: [], stanceShiftsInducedByHuman: 0 };
+
     // Push human message to history
     session.conversationHistory.push(message);
     session.turnManager.recordHumanTurn();
