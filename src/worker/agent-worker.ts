@@ -131,15 +131,18 @@ export class AgentWorker {
   }
 
   /**
-   * Deterministic-mode response for reset-summary generation. Pins
-   * temperature to 0 to stabilise output bytes and disables thinking
+   * Low-temperature response for reset-summary generation. Pins
+   * temperature to 0 to reduce output variance and disables thinking
    * (Anthropic requires temperature=1 when thinking is enabled).
    *
-   * Note on cross-provider determinism: temperature=0 is honoured by
-   * Claude and OpenAI. Gemini clamps to near-zero but may still have
-   * residual variance. The caller (SessionReset) does NOT rely on
-   * byte-identical output — the summary is read as plain message
-   * content, not hashed or cached.
+   * This is NOT byte-level determinism — no seed, no top-p/top-k control,
+   * and Gemini clamps near-zero with residual variance. The name emphasises
+   * "deterministic mode" as in "maximum-determinism config available",
+   * not a byte-identical guarantee. Callers (SessionReset) treat the output
+   * as plain message content, not a cache key.
+   *
+   * Stats bookkeeping matches respond() so facilitator reset-summary calls
+   * surface in stats.modelUsage for cost/telemetry dashboards.
    */
   async respondDeterministic(
     conversationHistory: CouncilMessage[],
@@ -164,11 +167,32 @@ export class AgentWorker {
 
     const model = this.resolveModel();
 
-    return this.provider.chat(messages, {
+    const response = await this.provider.chat(messages, {
       model,
       temperature: 0,
       systemPrompt,
     });
+
+    this.stats.responseCount++;
+    const totalLength =
+      this.stats.averageLength * (this.stats.responseCount - 1) + response.content.length;
+    this.stats.averageLength = totalLength / this.stats.responseCount;
+
+    if (response.skip) {
+      this.stats.skipCount++;
+    }
+
+    if (!this.stats.modelUsage[model]) {
+      this.stats.modelUsage[model] = { calls: 0, inputTokens: 0, outputTokens: 0 };
+    }
+    this.stats.modelUsage[model].calls++;
+    this.stats.modelUsage[model].inputTokens += response.tokensUsed.input;
+    this.stats.modelUsage[model].outputTokens += response.tokensUsed.output;
+
+    return {
+      ...response,
+      modelUsed: model,
+    };
   }
 
   getStats(): AgentStats {
