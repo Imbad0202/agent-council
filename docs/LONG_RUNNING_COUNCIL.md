@@ -39,6 +39,7 @@ When there are no resets yet, the reply is `No resets yet in this session.`
 
 ## Guards
 
+- **Empty segment.** `/councilreset` refuses with `EmptySegmentError` if the current segment contains zero turns (fresh thread, or second `/councilreset` called before any new deliberation). No facilitator tokens are burned, no snapshot row is written, `/councilhistory` stays clean. This guard is checked first because it's a permanent "nothing to reset" state, not a transient "try again later" state like the guards below.
 - **Blind-review active.** `/councilreset` refuses to run while an unrevealed blind-review session is pending on the same thread. The reply names the commands that unblock you (`/blindreview reveal` or `/cancelreview`). No facilitator tokens are burned by a refused reset.
 - **Deliberation in flight.** `/councilreset` refuses while a council round is still running on the thread. Sealing mid-round would produce a snapshot that diverges from the transcript the agents actually wrote into the segment. Wait for the round to finish, then retry. The flag clears in `finally`, so a thrown agent or send error still unblocks future resets.
 - **New messages during a reset.** Symmetrically, `runDeliberation` refuses to start a round while a reset is already in flight on the thread. The incoming human message is dropped with a notice asking the user to resend after the reset confirmation lands. This keeps the snapshot generated before the seal consistent with the transcript that actually gets sealed (round-9 codex finding).

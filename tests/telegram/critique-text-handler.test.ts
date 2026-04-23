@@ -88,13 +88,20 @@ describe('buildCritiqueTextHandler', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it('uses chat.id as threadId when message_thread_id is absent', async () => {
+  // Round-10 codex finding [P1]: non-forum Telegram chats have no
+  // message_thread_id, and GatewayRouter normalizes those to threadId 0.
+  // buildCritiqueTextHandler used to fall back to ctx.chat.id, which
+  // landed on the wrong thread key for every critique in a non-forum
+  // group. Normalize to 0 to match the rest of the codebase.
+  it('normalizes missing message_thread_id to 0 (matches GatewayRouter), not chat.id', async () => {
     const state = new PendingCritiqueState();
     let resolved: CritiquePromptResult | undefined;
-    state.register(100, {
+    // Pending state registered under thread 0 (same key GatewayRouter
+    // used when the /critique was initiated in a non-forum group).
+    state.register(0, {
       resolve: (r) => { resolved = r; },
     });
-    state.advanceToText(100, 'addPremise');
+    state.advanceToText(0, 'addPremise');
     const fallthrough = vi.fn();
     const handler = buildCritiqueTextHandler(100, state, fallthrough);
 

@@ -201,7 +201,7 @@ export function buildBlindReviewCallback(
     if (!ctx.match || !Array.isArray(ctx.match)) return;
     const code = ctx.match[1];
     const score = parseInt(ctx.match[2], 10);
-    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const threadId = resolveTelegramThreadId(ctx.message);
 
     const result = store.recordScore(threadId, code, score);
     if ('error' in result) {
@@ -234,7 +234,7 @@ export function buildPvgRotateCallback(
     if (ctx.chat?.id !== groupChatId) return;
     if (!ctx.match || !Array.isArray(ctx.match)) return;
     const guessedRole = ctx.match[1] as AdversarialRole;
-    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const threadId = resolveTelegramThreadId(ctx.message);
 
     const session = store.get(threadId);
     if (!session) {

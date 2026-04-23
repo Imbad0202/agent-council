@@ -17,7 +17,9 @@ function makeDelibHandler(overrides: Partial<{
   return {
     getBlindReviewSessionId: vi.fn(() => overrides.blindReviewSessionId ?? null),
     getCurrentTopic: vi.fn(() => 'topic'),
-    getCurrentSegmentMessages: vi.fn(() => [] as readonly unknown[]),
+    // Non-empty so round-10 empty-segment guard doesn't short-circuit.
+    // Sentinel content is greppable for future maintainers.
+    getCurrentSegmentMessages: vi.fn(() => [{ id: 'x', role: 'human', content: 'TEST_DEFAULT_TURN_ROUND10_GUARD', timestamp: 1 }] as readonly unknown[]),
     getSegments: vi.fn(() => [{ snapshotId: null }]),
     isResetInFlight: vi.fn(() => overrides.resetInFlight ?? false),
     isDeliberationInFlight: vi.fn(() => overrides.deliberationInFlight ?? false),

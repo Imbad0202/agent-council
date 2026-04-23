@@ -9,6 +9,7 @@ import {
 import {
   BlindReviewActiveError,
   DeliberationInProgressError,
+  EmptySegmentError,
   ResetInProgressError,
 } from './session-reset-errors.js';
 
@@ -46,15 +47,31 @@ export class SessionReset {
   ) {}
 
   async reset(handler: HandlerForReset, threadId: number): Promise<ResetResult> {
+    // Guard order matters: empty-segment first because it's the permanent
+    // "nothing to reset" state — no point telling the user "a blind-review
+    // is pending, try later" if retrying will still find zero turns to
+    // summarize. The three concurrency guards after it are transient
+    // "try again once X finishes" states.
+    //
+    // Round-10 codex finding [P2]: running /councilreset with nothing in
+    // the current segment used to burn facilitator tokens, persist a
+    // snapshot row, advance segment_index, and duplicate the prior
+    // summary (because prior-summaries get replayed into the prompt).
+    // That polluted /councilhistory with bogus reset points. Refuse early
+    // so empty resets are a cheap, visible no-op.
+    if (handler.getCurrentSegmentMessages(threadId).length === 0) {
+      throw new EmptySegmentError();
+    }
+
     if (handler.getBlindReviewSessionId(threadId) !== null) {
       throw new BlindReviewActiveError();
     }
 
-    // Asymmetric concurrency guard (round-7 audit): a deliberation round
-    // can still push agent turns into the current segment between the
-    // facilitator summary call and the seal. Refusing the reset here lets
-    // the in-flight round finish and keeps the snapshot consistent with
-    // what actually lands in the sealed segment.
+    // Symmetric concurrency guard (round-7 audit + round-9 correction):
+    // a deliberation round can still push agent turns into the current
+    // segment between the facilitator summary call and the seal. Reset
+    // refuses here; the matching "deliberation refuses while resetInFlight"
+    // direction lives in DeliberationHandler.runDeliberation.
     if (handler.isDeliberationInFlight(threadId)) {
       throw new DeliberationInProgressError(threadId);
     }

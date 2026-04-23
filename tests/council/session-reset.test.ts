@@ -4,6 +4,7 @@ import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
 import {
   BlindReviewActiveError,
   DeliberationInProgressError,
+  EmptySegmentError,
   ResetInProgressError,
 } from '../../src/council/session-reset-errors.js';
 import type { CouncilMessage } from '../../src/types.js';
@@ -33,11 +34,18 @@ function makeHandler(init: {
   resetInFlight?: boolean;
   deliberationInFlight?: boolean;
 } = {}) {
+  // Default to a single human turn so existing tests don't trip on the
+  // round-10 empty-segment guard. Tests that want to exercise the empty
+  // path explicitly pass `messages: []`. Sentinel content string makes
+  // it greppable if a future test accidentally relies on this default.
+  const defaultMessages: CouncilMessage[] = [
+    { id: 'default-turn', role: 'human', content: 'TEST_DEFAULT_TURN_ROUND10_GUARD', timestamp: 1 },
+  ];
   const segments: MutableSegment[] = [
     {
       startedAt: '2026-04-23T09:00:00Z',
       endedAt: null,
-      messages: init.messages ?? [],
+      messages: init.messages ?? defaultMessages,
       snapshotId: null,
     },
   ];
@@ -404,5 +412,23 @@ describe('SessionReset', () => {
     const allContent = messagesSent.map((m: { content: string }) => m.content).join('\n\n');
     expect(allContent).toContain('adopted rust for ingest pipeline');
     expect(allContent).toContain('retry backoff policy?');
+  });
+
+  // Round-10 codex finding [P2]: running /councilreset on a thread with
+  // zero new turns in the current segment still burned facilitator tokens,
+  // persisted a snapshot row, advanced segment_index, and duplicated the
+  // prior summary (because prior-summaries are replayed into the prompt).
+  // Result was a bogus "reset point" polluting /councilhistory.
+  it('refuses with EmptySegmentError when the current segment has no messages; no facilitator call, no DB write', async () => {
+    const db = new ResetSnapshotDB(':memory:');
+    const facilitator = makeFacilitator(VALID_SUMMARY);
+    const handler = makeHandler({ messages: [] });
+    const reset = new SessionReset(db, facilitator as never);
+
+    await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(EmptySegmentError);
+    expect(facilitator.respondDeterministic).not.toHaveBeenCalled();
+    expect(handler.sealCurrentSegment).not.toHaveBeenCalled();
+    expect(handler.openNewSegment).not.toHaveBeenCalled();
+    expect(db.listSnapshotsForThread(T)).toHaveLength(0);
   });
 });

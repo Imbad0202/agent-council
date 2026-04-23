@@ -6,6 +6,7 @@ import type {
   CritiqueRequest,
 } from '../council/human-critique-wiring.js';
 import { PendingCritiqueState } from './critique-state.js';
+import { resolveTelegramThreadId } from './handlers.js';
 
 // Callback data scheme: critique:<stance|skip>:<threadId>
 // Mirrors br-score:<code>:<score> / pvg-rotate:<role> so the handler lifecycle
@@ -74,7 +75,7 @@ export function buildCritiqueTextHandler(
     if (ctx.from?.is_bot) return false;
     const rawText = ctx.message?.text ?? '';
     const text = rawText.trim();
-    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const threadId = resolveTelegramThreadId(ctx.message);
     const pending = state.get(threadId);
     if (!pending || pending.phase !== 'awaiting-text' || !text) {
       await fallthrough(ctx);

@@ -24,3 +24,13 @@ export class DeliberationInProgressError extends Error {
     this.name = 'DeliberationInProgressError';
   }
 }
+
+export class EmptySegmentError extends Error {
+  constructor() {
+    super(
+      'No new turns to summarize in the current segment. ' +
+        '/councilreset is a no-op until the council deliberates at least once.',
+    );
+    this.name = 'EmptySegmentError';
+  }
+}

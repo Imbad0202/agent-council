@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   BlindReviewActiveError,
   DeliberationInProgressError,
+  EmptySegmentError,
   ResetInProgressError,
 } from '../../src/council/session-reset-errors.js';
 
@@ -31,5 +32,15 @@ describe('DeliberationInProgressError', () => {
     expect(err.message).toContain('99');
     expect(err.message).toContain('deliberation');
     expect(err.name).toBe('DeliberationInProgressError');
+  });
+});
+
+describe('EmptySegmentError', () => {
+  it('is an Error subclass with a user-facing message and sets name for instanceof branching', () => {
+    const err = new EmptySegmentError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('EmptySegmentError');
+    // Message should hint that there is nothing to summarize.
+    expect(err.message.length).toBeGreaterThan(10);
   });
 });
