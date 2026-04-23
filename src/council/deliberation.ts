@@ -267,6 +267,10 @@ export class DeliberationHandler {
       messages: [],
       snapshotId: null,
     });
+    // Round-13 codex finding [P2-X]: topic is segment-level. Clear it
+    // here so the next segment's first human turn re-initialises it
+    // (runDeliberation only writes when currentTopic === '').
+    session.currentTopic = '';
   }
 
   // Undoes the last sealCurrentSegment on this thread. Used by SessionReset
@@ -501,14 +505,26 @@ export class DeliberationHandler {
     // Emit deliberation.started. Topic source: no existing classifier output
     // carries a topic string, so we fall back to the first 80 chars of the
     // human message content (spec §4.5, plan Step 5g).
-    const topic = message.content.slice(0, 80);
-    session.currentTopic = topic;
+    //
+    // Round-13 codex finding [P2-X]: topic is SEGMENT-level, not turn-level.
+    // SessionReset frames the reset summary around session.currentTopic; if
+    // every round overwrites it, a multi-round segment whose last follow-up
+    // was a narrow question ("what about tests?") would bias the summary
+    // away from the segment's actual subject. Only initialise on the first
+    // human turn of a new segment (currentTopic === ''); openNewSegment
+    // clears it back to '' for the next segment. The per-round event payload
+    // still uses the latest message hint so listeners can react to the
+    // immediate prompt.
+    const turnTopic = message.content.slice(0, 80);
+    if (session.currentTopic === '') {
+      session.currentTopic = turnTopic;
+    }
     this.bus.emit('deliberation.started', {
       threadId,
       participants: agentIds,
       roles: currentRoles,
       structure: 'free',
-      topic,
+      topic: turnTopic,
     });
 
     // Sequential deliberation: first agent responds to human, second agent responds to both
@@ -758,13 +774,18 @@ export class DeliberationHandler {
     };
 
     try {
+      // Round-13 codex finding [P2-Y]: do NOT pass snapshotPrefix here.
+      // summaryMsg already contains only the current round's transcript;
+      // prepending the prior segment's snapshot would frame the user-facing
+      // 「本輪討論」 reply around stale decisions from the sealed segment.
+      // Peer agents (claude/openai) still get snapshotPrefix on their own
+      // respond() calls above — that's the carry-forward path.
       const summaryResponse = await this.facilitatorWorker.respond(
         [summaryMsg],
         'synthesizer',
         undefined,
         complexity,
         false,
-        snapshotPrefix,
       );
       if (summaryResponse.content.trim()) {
         await this.sendFn('facilitator', summaryResponse.content, threadId);

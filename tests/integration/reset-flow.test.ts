@@ -110,6 +110,34 @@ describe('Reset flow — provider-agnostic carry-forward', () => {
     }
   });
 
+  // Round-13 codex finding [P2-Y]: facilitatorWorker.respond() for the
+  // round-end summary used to be called with snapshotPrefix as the 6th
+  // argument. On the first deliberation after /councilreset, that meant
+  // the user-facing 「本輪討論」 reply was framed by the prior segment's
+  // summary instead of just the new exchange. Peer agents still need
+  // the snapshot (carry-forward); the round-end facilitator summary
+  // does not.
+  it('post-reset round-end facilitator summary does NOT receive snapshot prefix', async () => {
+    const { bus, sessionReset, handler, providers } = buildRealHandler({
+      facilitatorSummary: KNOWN_SUMMARY,
+    });
+
+    await runOneRound(bus, 'seed segment 0');
+    await sessionReset.reset(handler as never, THREAD);
+
+    const facilitatorCallsBefore = providers.facilitator.calls.length;
+    await runOneRound(bus, 'post-reset round 1 question');
+
+    // The post-reset round-end summary call MUST NOT carry the snapshot
+    // prefix as messages[0]. Peer agents (claude/openai) still get it —
+    // those assertions live in the carry-forward test above.
+    expect(providers.facilitator.calls.length).toBeGreaterThan(facilitatorCallsBefore);
+    for (let i = facilitatorCallsBefore; i < providers.facilitator.calls.length; i++) {
+      const call = providers.facilitator.calls[i];
+      expect(call.messages[0]?.content ?? '').not.toContain(PREPEND_HEADER);
+    }
+  });
+
   it('SessionReset facilitator call does not receive a snapshot prefix on the first reset', async () => {
     const { bus, sessionReset, handler, providers } = buildRealHandler({
       facilitatorSummary: KNOWN_SUMMARY,

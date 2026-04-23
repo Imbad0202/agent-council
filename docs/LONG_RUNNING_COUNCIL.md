@@ -84,6 +84,10 @@ If the rollback cleanup itself throws (e.g. the database handle has been closed)
 
 For completeness: round-12 also caught a related issue where `BlindReviewStore.create()` ran but `sendKeyboardFn` never reached because an earlier await threw. That one is fixed inline — the `runDeliberation` finally block now rolls back the store entry and the per-thread guard whenever a blind-review session was started but the keyboard was not successfully posted (`blindReviewKeyboardSent` sentinel).
 
+### `/councilhistory` Telegram reply not chunked
+
+Round-13 codex finding (P3). The Telegram bot handler concatenates every reset point into a single `ctx.reply()`. Telegram rejects messages longer than 4096 characters, so on a long-running thread that accumulates a few dozen `/councilreset` invocations, `/councilhistory` will start failing instead of returning anything. v0.5.2 will route the reply through the existing chunking helper (`splitForTelegram` in `src/telegram/format.ts`) or paginate by N entries per message. Workaround: the reply still works for typical usage (single-digit reset count); if you hit the limit, the CLI version of `/councilhistory` is unaffected.
+
 ## Design rationale
 
 See `docs/superpowers/specs/2026-04-23-v0.5.1-session-reset-design.md` for the full design, including the post-Codex scope reduction that trimmed v0.5.1 down to the provider-agnostic prepend and deferred the cache-token instrumentation to v0.5.2.

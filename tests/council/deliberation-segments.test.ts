@@ -194,6 +194,62 @@ describe('DeliberationHandler per-thread segments', () => {
     expect(handler.hasPendingClassifications(T)).toBe(false);
   });
 
+  // Round-13 codex finding [P2-X]: SessionReset frames its summary prompt
+  // around getCurrentTopic(), but runDeliberation used to overwrite
+  // session.currentTopic on every human turn. A multi-round segment whose
+  // last follow-up was a narrow question ("what about tests?") would then
+  // bias the reset summary toward that narrow framing instead of the
+  // segment's actual subject. Fix: topic is segment-level — set on the
+  // first human turn of a segment, then sticky until openNewSegment
+  // resets it.
+  it('keeps segment topic from the first human turn across multi-round segments', () => {
+    const { handler, bus } = buildTestHandler();
+    const m1: CouncilMessage = msg('m1', 'rust vs go for a high-throughput service');
+    const m2: CouncilMessage = msg('m2', 'what about tests?');
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId: T,
+      message: m1,
+    });
+    // First-turn topic was set.
+    expect(handler.getCurrentTopic(T)).toBe('rust vs go for a high-throughput service');
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId: T,
+      message: m2,
+    });
+    // Second turn must NOT overwrite — segment-level topic stays put.
+    expect(handler.getCurrentTopic(T)).toBe('rust vs go for a high-throughput service');
+  });
+
+  it('clears segment topic on openNewSegment so the next segment can re-init from its own first turn', () => {
+    const { handler, bus } = buildTestHandler();
+    const m1: CouncilMessage = msg('m1', 'rust vs go');
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId: T,
+      message: m1,
+    });
+    handler.sealCurrentSegment(T, 'snap-x');
+    handler.openNewSegment(T);
+    expect(handler.getCurrentTopic(T)).toBe('');
+
+    const m2: CouncilMessage = msg('m2', 'next segment topic');
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId: T,
+      message: m2,
+    });
+    expect(handler.getCurrentTopic(T)).toBe('next segment topic');
+  });
+
   it('blind-review.cancelled event clears blindReviewSessionId so /councilreset is no longer blocked', () => {
     const { handler, bus } = buildTestHandler();
     // Materialize the session first — started/cancelled listeners skip when
