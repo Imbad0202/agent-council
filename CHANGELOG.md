@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-23
+
+### Added
+
+**Human critique layer (#18)** — Wang & Zhang (2026) *Pedagogical partnerships with generative AI*. Post-measure + human-injectable: no pre-gate blocks the user, but the council measures collaboration depth and invites critique when it's drifting toward consensus.
+
+- `CollaborationDepthRubric` (4 levels × 4 axes: surface / transactional / dialogic / co-constructive) in `src/shared/collaboration-depth-rubric.ts`, reusable by ARS `collaboration_depth_agent`.
+- `scoreSession` pure function in `src/council/collaboration-depth.ts`, equal-weight 4 axes, output attached to `deliberation.ended` payload as optional `collaborationScore`.
+- `'human-critique'` role on `CouncilMessage` with stance (`challenge` | `question` | `addPremise`) + `critiqueTarget`.
+- `HumanCritiqueStore` (`src/council/human-critique-store.ts`) — pending-window primitive. Promise-based open/submit/skip lifecycle, per-thread, bot-restart clears. Owns the authoritative critique timer.
+- `DeliberationHandler` now pauses between agent turns when wired with `critiqueStore`, opens a window, awaits outcome (submitted/skipped/timeout), and injects the stance + content into the next agent's context.
+- 4 new events on the bus: `human-critique.requested` / `.submitted` / `.skipped` / `.invited`.
+- `AntiSycophancyEngine.shouldInviteHumanCritique()` + shared `isConverging()` — convergence detector triggers invite prompts in `deliberation.ts` so the user has an obvious handle to break consensus.
+- Facilitator round summary appends `協作深度：<level>` tail line, driven by `formatScoreLine`.
+- Critique injection prompts extracted to `src/council/human-critique-prompts.ts` for i18n parity with `pattern-prompts.ts`.
+
+**Telegram InlineKeyboard critique flow (#19)** — 4-button UI (Challenge / Question / Add premise / Skip). Skip resolves immediately. Stance buttons transition to `awaiting-text` phase; next free-text message becomes the critique body. Mirrors the CLI's two-stage readline picker.
+
+- `PendingCritiqueState` (`src/telegram/critique-state.ts`) — per-thread `awaiting-button | awaiting-text` discriminated-union state machine. Includes `drain()` for graceful shutdown.
+- `buildCritiqueCallback`, `buildCritiqueTextHandler`, `createTelegramCritiquePromptUser`, `CRITIQUE_CALLBACK_PATTERN` in `src/telegram/critique-callback.ts`.
+- `TelegramAdapter.stop()` calls `state.drain()` so pending-state timers don't hold the event loop open past `bot.stop()`.
+- `src/index.ts` uses narrow structural interfaces (`DefaultCritiquePromptAdapter`, `CritiqueUiAdapter`) for adapter feature-detection — renaming an adapter method breaks at compile time instead of failing silently (no `as any` duck-typing).
+
+### Changed
+
+**Timer consolidation (#20)** — Single authoritative timer in `HumanCritiqueStore`. Prior to this, `HumanCritiqueStore` and `PendingCritiqueState` each ran independent 30s timers on the same threadId, guarded only by empty-entry checks. Harmless but wasteful and a future-race trap.
+
+- `HumanCritiqueStore` exposes `onResolved(threadId, listener)` — one-shot subscription, returns an unsubscribe. Fires immediately if no window exists (callers must subscribe after `open()`).
+- `dispatchCritiqueRequest` (`src/council/human-critique-wiring.ts`) subscribes via `onResolved` and invokes the new `wiring.cancelPrompt` callback so the adapter drains its pending UI entry when the store's timer fires first.
+- `PendingCritiqueState.register` no longer accepts `timeoutMs` — state is pure UI bookkeeping; `drain()` still covers shutdown.
+- `HumanCritiqueStore.close()` fires listeners inside `try/catch` so a throwing subscriber can't silently drop siblings; listeners fire before resolving the window promise for read-after-close consistency.
+
+**`BotManager.setupListener` options object (#20)** — 4 positional optionals collapsed to `(handler, wiring: { blindReview?, pvgRotate?, critiqueUi? })`.
+
+### Tests
+
+- 527 → 617 passing. Net: +94 tests covering critique store lifecycle, Telegram InlineKeyboard state machine, `onResolved` subscription contract, cancelPrompt store-wins-timer path, and `event-flow` integration case for mid-deliberation critique → `deliberation.ended` with non-surface collaboration level.
+
 ## [0.4.0] - 2026-04-20
 
 ### Added
