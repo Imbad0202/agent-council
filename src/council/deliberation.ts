@@ -257,6 +257,7 @@ export class DeliberationHandler {
 
     const blindReviewMode = message?.blindReview === true;
     let blindCodes: Map<string, string> | undefined;
+    let blindReviewSessionId: string | undefined;
     if (blindReviewMode && agentIds.length >= 2) {
       const rolesMap = new Map(Object.entries(currentRoles));
       const session = this.blindReviewStore.create(threadId, agentIds, rolesMap);
@@ -267,6 +268,7 @@ export class DeliberationHandler {
         return;
       }
       blindCodes = session.codeToAgentId;
+      blindReviewSessionId = session.sessionId;
     }
 
     // Emit deliberation.started
@@ -454,7 +456,7 @@ export class DeliberationHandler {
     }
 
     // Blind-review: post scoring keyboard after all responses are in
-    if (blindCodes && blindCodes.size >= 2 && this.sendKeyboardFn) {
+    if (blindCodes && blindCodes.size >= 2 && this.sendKeyboardFn && blindReviewSessionId) {
       const codes = [...blindCodes.keys()];
       const keyboard = buildScoringKeyboard(codes);
       await this.sendKeyboardFn(
@@ -463,7 +465,7 @@ export class DeliberationHandler {
         keyboard,
         threadId,
       );
-      this.bus.emit('blind-review.started', { threadId, codes });
+      this.bus.emit('blind-review.started', { threadId, codes, sessionId: blindReviewSessionId });
     }
 
     const collaborationScore = scoreSession({

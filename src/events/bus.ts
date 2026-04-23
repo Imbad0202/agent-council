@@ -32,7 +32,7 @@ export interface EventMap {
   'execution.completed': { threadId: number; tasks: ExecutionTask[]; diffs: string[] };
   'session.ending': { threadId: number; trigger: 'keyword' | 'timeout' | 'max_turns' };
   'session.ended': { threadId: number; topic: string; outcome: string };
-  'blind-review.started': { threadId: number; codes: string[] };
+  'blind-review.started': { threadId: number; codes: string[]; sessionId: string };
   'blind-review.scored': { threadId: number; code: string; score: number; allScored: boolean };
   'blind-review.revealed': { threadId: number };
   'blind-review.persist-failed': { threadId: number; sessionId: string; error: Error };
