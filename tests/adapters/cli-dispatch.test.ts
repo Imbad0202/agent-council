@@ -1,5 +1,27 @@
 import { describe, it, expect, vi } from 'vitest';
-import { routeCliInput } from '../../src/adapters/cli-dispatch.js';
+import { routeCliInput, deriveCliThreadId } from '../../src/adapters/cli-dispatch.js';
+
+// Round-14 codex finding [P2-W]: CLI used to hard-code threadId: 0. Combined
+// with round-9's restart-safe getSnapshotPrefix DB fallback, that meant a
+// brand-new CLI session inherited the previous run's /councilreset summary
+// as shared context, and /councilhistory merged unrelated CLI sessions
+// together. deriveCliThreadId returns a per-process unique value so each
+// CLI invocation is its own session boundary in the snapshot DB.
+describe('deriveCliThreadId', () => {
+  it('is non-zero so it does not collide with the legacy hard-coded thread 0', () => {
+    expect(deriveCliThreadId(() => 1_700_000_000_000)).not.toBe(0);
+  });
+
+  it('returns the injected epoch so callers can derive a deterministic ID', () => {
+    expect(deriveCliThreadId(() => 1_700_000_000_000)).toBe(1_700_000_000_000);
+  });
+
+  it('produces distinct IDs for two CLI processes started at different epochs', () => {
+    const a = deriveCliThreadId(() => 1_700_000_000_000);
+    const b = deriveCliThreadId(() => 1_700_000_000_001);
+    expect(a).not.toBe(b);
+  });
+});
 
 describe('routeCliInput', () => {
   it('routes /councilreset to CliCommandHandler.handleAsync', async () => {

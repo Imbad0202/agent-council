@@ -1,5 +1,26 @@
 import { CLI_COMMAND_NAMES, type CliCommandHandler } from './cli-commands.js';
 
+// Round-14 codex finding [P2-W]: CLI used to hard-code threadId: 0 in two
+// places (CliCommandHandler reset wiring + adapter callback). Combined with
+// round-9's restart-safe getSnapshotPrefix DB fallback, that meant a new
+// CLI session would inherit the previous run's /councilreset summary as
+// shared context, and /councilhistory merged unrelated CLI sessions
+// together — a real cross-session leak, not just stale UX.
+//
+// Each CLI invocation now gets its own threadId, derived from the process
+// startup epoch. Caller passes a `now` function for deterministic tests;
+// production callers in src/index.ts use `Date.now`. Telegram threadIds
+// stay normalized to 0 because their session boundary is the chat / reply
+// thread, not the OS process.
+//
+// Side effect: existing CLI users lose direct visibility into snapshots
+// recorded under the legacy thread 0 — those rows are still in
+// data/council.db but the new threadId won't match them. CHANGELOG flags
+// this as a deliberate privacy trade-off.
+export function deriveCliThreadId(now: () => number = Date.now): number {
+  return now();
+}
+
 export interface RouterForCliDispatch {
   handleHumanMessage(msg: {
     id: string;

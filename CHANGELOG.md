@@ -25,6 +25,11 @@ All notable changes to this project will be documented in this file.
 - CLI main loop now dispatches slash commands via `routeCliInput` before the deliberation router, so `/councilreset` and `/councilhistory` work on CLI as well as Telegram.
 - `memoryDb` is reused between the Memory layer and `CliCommandHandler` instead of opening a second SQLite connection.
 
+### Fixed (round-14 codex review)
+
+- **CLI threadId is now per-process** — previously hard-coded to `0`, which meant round-9's restart-safe `getSnapshotPrefix` DB fallback would rehydrate the prior CLI run's `/councilreset` summary as shared context on every new CLI invocation, and `/councilhistory` merged unrelated CLI sessions. Each CLI process now derives a unique threadId from its startup epoch via `deriveCliThreadId` (`src/adapters/cli-dispatch.ts`). Telegram threadIds are unaffected (they already have session boundary via chat/reply-thread). **Migration note:** existing users' pre-fix snapshots remain in `data/council.db` under thread `0` but will not be visible from new CLI sessions. Drop the row or rename the DB if you need a clean slate.
+- **`openNewSegment` now resets AntiSycophancyEngine** — previously only `currentTopic` was cleared on reset. Segment-scoped classification history leaked across `/councilreset`, so a prior agreement streak would trigger convergence prompts / HITL invites in the first post-reset round. Now `session.antiSycophancy.reset()` is called on `openNewSegment`, matching the "reset boundary forgets segment-scoped heuristic state" invariant introduced in round-13 for topic.
+
 ### Deferred to v0.5.2
 
 - Claude-only cached `systemPromptParts` fast path for snapshot — v0.5.1 ships the provider-agnostic prepend only and re-pays the snapshot tokens on every post-reset turn.

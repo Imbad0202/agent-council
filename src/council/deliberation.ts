@@ -271,6 +271,15 @@ export class DeliberationHandler {
     // here so the next segment's first human turn re-initialises it
     // (runDeliberation only writes when currentTopic === '').
     session.currentTopic = '';
+
+    // Round-14 codex finding [P2-V]: AntiSycophancyEngine's classification
+    // history is segment-level too. If the sealed segment ended in an
+    // agreement streak, leaving the state intact would make the first
+    // post-reset round fire a convergence prompt / HITL invite based on
+    // the OLD segment. Reset the engine so the new segment starts from a
+    // neutral convergence state. Matches the currentTopic clear above:
+    // reset boundary == "forget segment-scoped heuristic state."
+    session.antiSycophancy.reset();
   }
 
   // Undoes the last sealCurrentSegment on this thread. Used by SessionReset
@@ -345,6 +354,26 @@ export class DeliberationHandler {
   // the private currentMessages() helper inside runDeliberation.
   public pushMessageForTest(threadId: number, m: CouncilMessage): void {
     this.currentMessages(this.getSession(threadId)).push(m);
+  }
+
+  // Test-only accessors for round-14 P2-V (AntiSycophancyEngine state must
+  // be cleared on openNewSegment). Production code consults the convergence
+  // state via AntiSycophancyEngine.shouldInviteHumanCritique /
+  // checkConvergence inside runDeliberation; exposing the boolean through
+  // the handler lets the segment-boundary test assert the leak is plugged
+  // without having to exercise a full round.
+  public injectAntiSycophancyClassificationsForTest(
+    threadId: number,
+    classifications: ResponseClassification[],
+  ): void {
+    const engine = this.getSession(threadId).antiSycophancy;
+    for (const c of classifications) {
+      engine.recordClassification(c);
+    }
+  }
+
+  public isConvergingForTest(threadId: number): boolean {
+    return this.getSession(threadId).antiSycophancy.shouldInviteHumanCritique();
   }
 
   // Open a critique window before the next agent speaks. Resolves to the

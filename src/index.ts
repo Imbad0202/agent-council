@@ -14,7 +14,7 @@ import { DeliberationHandler } from './council/deliberation.js';
 import { SessionReset } from './council/session-reset.js';
 import { ResetSnapshotDB } from './storage/reset-snapshot-db.js';
 import { CliCommandHandler } from './adapters/cli-commands.js';
-import { routeCliInput } from './adapters/cli-dispatch.js';
+import { routeCliInput, deriveCliThreadId } from './adapters/cli-dispatch.js';
 import { CliSessionManager } from './adapters/cli-sessions.js';
 import { BlindReviewDB } from './council/blind-review-db.js';
 import { PvgRotateStore } from './council/pvg-rotate-store.js';
@@ -300,6 +300,12 @@ async function main() {
   const router = new GatewayRouter(bus, sendFn, councilConfig);
   console.log('GatewayRouter initialized (event-driven)');
 
+  // Round-14 codex finding [P2-W]: derive a per-process threadId for CLI
+  // so different CLI invocations don't share /councilreset history via the
+  // round-9 restart-safe DB fallback. Computed once per process so the
+  // wiring below and the adapter callback further down see the same value.
+  const cliThreadId = args.adapter === 'cli' ? deriveCliThreadId() : 0;
+
   // CLI command dispatcher (scoped to CLI; Telegram has its own bot.command
   // registration path in setupListener).
   const cliCommandHandler =
@@ -318,8 +324,8 @@ async function main() {
                 sessionReset,
                 deliberationHandler,
                 resetSnapshotDB,
-                // CLI has one implicit thread; Telegram threads are per-chat.
-                threadId: 0,
+                // Per-process CLI threadId (round-14 P2-W fix).
+                threadId: cliThreadId,
               }
             : {},
         )
@@ -331,8 +337,13 @@ async function main() {
 
   await adapter.start((msg) => {
     if (cliCommandHandler) {
-      // CLI: route slash commands to CliCommandHandler; everything else to router.
-      void routeCliInput(msg.content, router, cliCommandHandler, msg.threadId ?? 0);
+      // CLI: route slash commands to CliCommandHandler; everything else to
+      // router. Use the per-process cliThreadId (round-14 P2-W) so the
+      // adapter callback and the CliCommandHandler reset wiring agree on
+      // which thread this CLI session lives on. The CLI adapter currently
+      // always passes msg.threadId === 0, but we override regardless to
+      // make the boundary explicit at the wiring layer.
+      void routeCliInput(msg.content, router, cliCommandHandler, cliThreadId);
       return;
     }
     router.handleHumanMessage({

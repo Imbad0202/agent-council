@@ -250,6 +250,25 @@ describe('DeliberationHandler per-thread segments', () => {
     expect(handler.getCurrentTopic(T)).toBe('next segment topic');
   });
 
+  // Round-14 codex finding [P2-V]: openNewSegment only cleared currentTopic.
+  // The session's AntiSycophancyEngine survived unchanged, so if the sealed
+  // segment ended in an agreement streak, the first post-reset round would
+  // immediately get convergence prompts + HITL invites based on the OLD
+  // segment's classification history, not the new transcript.
+  it('openNewSegment resets AntiSycophancyEngine so prior-segment convergence does not leak forward', () => {
+    const { handler } = buildTestHandler();
+    // Simulate an agreement streak ending the first segment.
+    handler.injectAntiSycophancyClassificationsForTest(T, ['agreement', 'agreement', 'agreement']);
+    expect(handler.isConvergingForTest(T)).toBe(true);
+
+    handler.sealCurrentSegment(T, 'snap-x');
+    handler.openNewSegment(T);
+
+    // After openNewSegment the new segment must NOT inherit the prior
+    // segment's convergence state.
+    expect(handler.isConvergingForTest(T)).toBe(false);
+  });
+
   it('blind-review.cancelled event clears blindReviewSessionId so /councilreset is no longer blocked', () => {
     const { handler, bus } = buildTestHandler();
     // Materialize the session first — started/cancelled listeners skip when
