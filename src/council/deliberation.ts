@@ -1,5 +1,6 @@
 import type { EventBus } from '../events/bus.js';
 import type { AgentWorker } from '../worker/agent-worker.js';
+import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type {
   CouncilConfig,
   CouncilMessage,
@@ -8,6 +9,7 @@ import type {
   IntentType,
   ResponseClassification,
   ProviderResponse,
+  HistorySegment,
 } from '../types.js';
 import { TurnManager } from '../gateway/turn-manager.js';
 import { AntiSycophancyEngine } from './anti-sycophancy.js';
@@ -48,12 +50,15 @@ type SendFn = (agentId: string, content: string, threadId?: number) => Promise<v
 type SendKeyboardFn = (agentId: string, content: string, keyboard: import('grammy').InlineKeyboard, threadId?: number) => Promise<void>;
 
 interface SessionState {
-  conversationHistory: CouncilMessage[];
+  segments: HistorySegment[];
   currentParticipants: string[];
   turnManager: TurnManager;
   antiSycophancy: AntiSycophancyEngine;
   pendingPatternInjection: { targetAgent: string; prompt: string } | null;
   critiqueLog: CritiqueSessionLog;
+  blindReviewSessionId: string | null;
+  currentTopic: string;
+  resetInFlight: boolean;
 }
 
 export class DeliberationHandler {
@@ -67,6 +72,7 @@ export class DeliberationHandler {
   private pvgRotateStore: PvgRotateStore;
   private critiqueStore: HumanCritiqueStore | undefined;
   private critiqueTimeoutMs: number;
+  private resetSnapshotDB: ResetSnapshotDB | undefined;
   private sessions: Map<number, SessionState> = new Map();
 
   public getBlindReviewStore(): BlindReviewStore {
@@ -99,6 +105,7 @@ export class DeliberationHandler {
       pvgRotateStore?: PvgRotateStore;
       critiqueStore?: HumanCritiqueStore;
       critiqueTimeoutMs?: number;
+      resetSnapshotDB?: ResetSnapshotDB;
     },
   ) {
     this.bus = bus;
@@ -110,6 +117,7 @@ export class DeliberationHandler {
     this.pvgRotateStore = options?.pvgRotateStore ?? new PvgRotateStore();
     this.critiqueStore = options?.critiqueStore;
     this.critiqueTimeoutMs = options?.critiqueTimeoutMs ?? DEFAULT_CRITIQUE_TIMEOUT_MS;
+    this.resetSnapshotDB = options?.resetSnapshotDB;
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
@@ -136,7 +144,7 @@ export class DeliberationHandler {
           assignedRole: 'synthesizer',
         },
       };
-      session.conversationHistory.push(facilitatorMsg);
+      this.currentMessages(session).push(facilitatorMsg);
     });
 
     // Subscribe to pattern.detected — store pending injection
@@ -149,20 +157,106 @@ export class DeliberationHandler {
         prompt: PATTERN_INJECTION_PROMPTS[payload.pattern],
       };
     });
+
+    // Track blind-review session id on per-thread SessionState so /councilreset
+    // can refuse resets while a blind-review round is still unrevealed.
+    this.bus.on('blind-review.started', ({ threadId, sessionId }) => {
+      const session = this.sessions.get(threadId);
+      if (!session) return;
+      session.blindReviewSessionId = sessionId;
+    });
+
+    this.bus.on('blind-review.revealed', ({ threadId }) => {
+      const session = this.sessions.get(threadId);
+      if (!session) return;
+      session.blindReviewSessionId = null;
+    });
   }
 
   private getSession(threadId: number): SessionState {
     if (!this.sessions.has(threadId)) {
       this.sessions.set(threadId, {
-        conversationHistory: [],
+        segments: [
+          { startedAt: new Date().toISOString(), endedAt: null, messages: [], snapshotId: null },
+        ],
         currentParticipants: this.workers.map((w) => w.id),
         turnManager: new TurnManager(this.config.gateway),
         antiSycophancy: new AntiSycophancyEngine(this.config.antiSycophancy),
         pendingPatternInjection: null,
         critiqueLog: { agentTurns: 0, humanCritiques: [], stanceShiftsInducedByHuman: 0 },
+        blindReviewSessionId: null,
+        currentTopic: '',
+        resetInFlight: false,
       });
     }
     return this.sessions.get(threadId)!;
+  }
+
+  private currentMessages(session: SessionState): CouncilMessage[] {
+    return session.segments[session.segments.length - 1].messages;
+  }
+
+  public getSegments(threadId: number): readonly Readonly<HistorySegment>[] {
+    return this.getSession(threadId).segments;
+  }
+
+  public getCurrentSegmentMessages(threadId: number): CouncilMessage[] {
+    return this.currentMessages(this.getSession(threadId));
+  }
+
+  public sealCurrentSegment(threadId: number, snapshotId: string): void {
+    const session = this.getSession(threadId);
+    const last = session.segments[session.segments.length - 1];
+    if (last.endedAt !== null) {
+      throw new Error(`segment ${session.segments.length - 1} already sealed`);
+    }
+    last.endedAt = new Date().toISOString();
+    last.snapshotId = snapshotId;
+  }
+
+  public openNewSegment(threadId: number): void {
+    const session = this.getSession(threadId);
+    const last = session.segments[session.segments.length - 1];
+    if (last.endedAt === null) {
+      throw new Error('must seal current segment before opening a new one');
+    }
+    session.segments.push({
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      messages: [],
+      snapshotId: null,
+    });
+  }
+
+  // Returns the most recent reset-snapshot summary for this thread, or null
+  // if no prior /councilreset has happened (or resetSnapshotDB is not wired).
+  public getSnapshotPrefix(threadId: number): string | null {
+    if (!this.resetSnapshotDB) return null;
+    const snaps = this.resetSnapshotDB.listSnapshotsForThread(threadId);
+    return snaps.at(-1)?.summaryMarkdown ?? null;
+  }
+
+  public getBlindReviewSessionId(threadId: number): string | null {
+    return this.getSession(threadId).blindReviewSessionId;
+  }
+
+  public getCurrentTopic(threadId: number): string {
+    return this.getSession(threadId).currentTopic;
+  }
+
+  public setResetInFlight(threadId: number, v: boolean): void {
+    this.getSession(threadId).resetInFlight = v;
+  }
+
+  public isResetInFlight(threadId: number): boolean {
+    return this.getSession(threadId).resetInFlight;
+  }
+
+  // Test-only: lets deliberation-segments.test.ts exercise segment lifecycle
+  // without running a full runDeliberation round. Production callers push via
+  // the private currentMessages() helper inside runDeliberation.
+  public pushMessageForTest(threadId: number, m: CouncilMessage): void {
+    this.currentMessages(this.getSession(threadId)).push(m);
   }
 
   // Open a critique window before the next agent speaks. Resolves to the
@@ -207,14 +301,14 @@ export class DeliberationHandler {
   ): Promise<void> {
     const session = this.getSession(threadId);
 
-    // Reset per-round critique stats. The conversationHistory is retained
-    // across rounds for context continuity, but collaboration-depth metrics
-    // are scoped to THIS round — a user asking a follow-up shouldn't inherit
-    // last round's acceptance ratio.
+    // Reset per-round critique stats. Segment messages are retained across
+    // rounds for context continuity, but collaboration-depth metrics are
+    // scoped to THIS round — a user asking a follow-up shouldn't inherit last
+    // round's acceptance ratio.
     session.critiqueLog = { agentTurns: 0, humanCritiques: [], stanceShiftsInducedByHuman: 0 };
 
-    // Push human message to history
-    session.conversationHistory.push(message);
+    // Push human message to current segment
+    this.currentMessages(session).push(message);
     session.turnManager.recordHumanTurn();
 
     // Determine active workers based on current participants
@@ -260,27 +354,37 @@ export class DeliberationHandler {
     let blindReviewSessionId: string | undefined;
     if (blindReviewMode && agentIds.length >= 2) {
       const rolesMap = new Map(Object.entries(currentRoles));
-      const session = this.blindReviewStore.create(threadId, agentIds, rolesMap);
-      if ('error' in session) {
+      const blindReviewResult = this.blindReviewStore.create(threadId, agentIds, rolesMap);
+      if ('error' in blindReviewResult) {
         // The first available bot is fine — we just need to send the error somewhere
         const fallbackId = agentIds[0];
-        await this.sendFn(fallbackId, `❌ ${session.error}. Use /cancelreview to end the previous round.`, threadId);
+        await this.sendFn(fallbackId, `❌ ${blindReviewResult.error}. Use /cancelreview to end the previous round.`, threadId);
         return;
       }
-      blindCodes = session.codeToAgentId;
-      blindReviewSessionId = session.sessionId;
+      blindCodes = blindReviewResult.codeToAgentId;
+      blindReviewSessionId = blindReviewResult.sessionId;
     }
 
-    // Emit deliberation.started
+    // Emit deliberation.started. Topic source: no existing classifier output
+    // carries a topic string, so we fall back to the first 80 chars of the
+    // human message content (spec §4.5, plan Step 5g).
+    const topic = message.content.slice(0, 80);
+    session.currentTopic = topic;
     this.bus.emit('deliberation.started', {
       threadId,
       participants: agentIds,
       roles: currentRoles,
       structure: 'free',
+      topic,
     });
 
     // Sequential deliberation: first agent responds to human, second agent responds to both
     const responses: Array<{ worker: AgentWorker; role: AgentRole; response: ProviderResponse }> = [];
+
+    // Hoisted: the snapshot prefix can't change mid-round (reset is user-
+    // triggered between rounds), so resolve it once to avoid an SQLite hit per
+    // agent turn.
+    const snapshotPrefix = this.getSnapshotPrefix(threadId) ?? undefined;
 
     let prevAgentId: string = HUMAN_SENTINEL;
     for (const worker of activeWorkers) {
@@ -296,9 +400,9 @@ export class DeliberationHandler {
 
       // Human-critique pause: open a window before this agent speaks. If the
       // user submits a critique, inject it one-shot into THIS agent's history
-      // + challenge prompt only. We deliberately don't push it onto
-      // session.conversationHistory so a critique targeted at worker.id
-      // doesn't leak into later agents' or later rounds' context.
+      // + challenge prompt only. We deliberately don't push it onto the
+      // current segment so a critique targeted at worker.id doesn't leak into
+      // later agents' or later rounds' context.
       const critiqueOutcome = await this.awaitCritique(threadId, prevAgentId, worker.id);
       let injectedCritiqueText: string | undefined;
       let turnCritiqueMsg: CouncilMessage | undefined;
@@ -324,8 +428,10 @@ export class DeliberationHandler {
       // Emit agent.responding
       this.bus.emit('agent.responding', { threadId, agentId: worker.id, role });
 
+      const msgs = this.currentMessages(session);
+
       // Build challenge prompt from anti-sycophancy
-      const lastAgentMsg = [...session.conversationHistory]
+      const lastAgentMsg = [...msgs]
         .reverse()
         .find((m) => m.role === 'agent' && m.agentId !== worker.id);
 
@@ -357,9 +463,7 @@ export class DeliberationHandler {
         session.pendingPatternInjection = null;
       }
 
-      const turnHistory = turnCritiqueMsg
-        ? [...session.conversationHistory, turnCritiqueMsg]
-        : session.conversationHistory;
+      const turnHistory = turnCritiqueMsg ? [...msgs, turnCritiqueMsg] : msgs;
 
       const response = await worker.respond(
         turnHistory,
@@ -367,6 +471,7 @@ export class DeliberationHandler {
         challengePrompt,
         complexity,
         rotationMode,
+        snapshotPrefix,
       );
 
       // Tag turn into blind-review session if active
@@ -401,8 +506,8 @@ export class DeliberationHandler {
           },
         };
 
-        // Push to history BEFORE next agent — so next agent sees this response
-        session.conversationHistory.push(agentMsg);
+        // Push to current segment BEFORE next agent — so next agent sees this response
+        msgs.push(agentMsg);
         session.turnManager.recordAgentTurn(worker.id);
         session.critiqueLog.agentTurns += 1;
         prevAgentId = worker.id;
@@ -501,7 +606,14 @@ export class DeliberationHandler {
     };
 
     try {
-      const summaryResponse = await this.facilitatorWorker.respond([summaryMsg], 'synthesizer', undefined, complexity);
+      const summaryResponse = await this.facilitatorWorker.respond(
+        [summaryMsg],
+        'synthesizer',
+        undefined,
+        complexity,
+        false,
+        snapshotPrefix,
+      );
       if (summaryResponse.content.trim()) {
         await this.sendFn('facilitator', summaryResponse.content, threadId);
       }

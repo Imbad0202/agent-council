@@ -15,7 +15,7 @@ import type {
 export interface EventMap {
   'message.received': { message: CouncilMessage; threadId: number };
   'intent.classified': { intent: IntentType; complexity: Complexity; threadId: number; message: CouncilMessage };
-  'deliberation.started': { threadId: number; participants: string[]; roles: Record<string, AgentRole>; structure: DebateStructure };
+  'deliberation.started': { threadId: number; participants: string[]; roles: Record<string, AgentRole>; structure: DebateStructure; topic: string };
   'memory.injected': { threadId: number; agentId: string; memories: string[] };
   'agent.responding': { threadId: number; agentId: string; role: AgentRole };
   'agent.responded': { threadId: number; agentId: string; response: ProviderResponse; role: AgentRole; classification: ResponseClassification };
