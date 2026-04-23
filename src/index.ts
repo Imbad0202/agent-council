@@ -307,9 +307,11 @@ async function main() {
       ? new CliCommandHandler(
           new CliSessionManager(resolve('data')),
           // Reuse the memoryDb opened by the Memory layer so both paths see
-          // the same rows; fall back to a fresh handle only when the Memory
-          // layer is disabled (CLI still needs /memories to not crash).
-          memoryDb ?? new MemoryDB(resolve('data/council.db')),
+          // the same rows. When the Memory layer is disabled, fall back to
+          // the default brain.db path (memory schema) rather than
+          // council.db, which belongs to BlindReview / PvgRotate / Reset
+          // snapshot schemas and has a different storage boundary.
+          memoryDb ?? new MemoryDB(resolve('data/brain.db')),
           (line) => console.log(line),
           sessionReset
             ? {

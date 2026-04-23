@@ -149,23 +149,25 @@ describe('SessionReset', () => {
     expect(db.listSnapshotsForThread(T)).toHaveLength(0);
   });
 
-  it('does not mutate handler state if DB write fails (unique segment_index conflict)', async () => {
+  it('does not mutate handler state if DB write fails', async () => {
+    // Pre-round-6 this was triggered by pre-seeding a row at segment_index=0
+    // to force a UNIQUE collision. That collision path is now prevented by
+    // computing segmentIndex as max(existing)+1, so we induce the failure
+    // directly via a recordSnapshot spy instead.
     const db = new ResetSnapshotDB(':memory:');
-    db.recordSnapshot({
-      snapshotId: 'conflict',
-      threadId: T,
-      segmentIndex: 0,
-      sealedAt: '2026-04-23T08:00:00Z',
-      summaryMarkdown: VALID_SUMMARY,
-      metadata: { decisionsCount: 0, openQuestionsCount: 0, blindReviewSessionId: null },
+    vi.spyOn(db, 'recordSnapshot').mockImplementation(() => {
+      throw new Error('db write failed');
     });
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler();
     const reset = new SessionReset(db, facilitator as never);
 
-    await expect(reset.reset(handler as never, T)).rejects.toThrow();
+    await expect(reset.reset(handler as never, T)).rejects.toThrow('db write failed');
     expect(handler.sealCurrentSegment).not.toHaveBeenCalled();
     expect(handler.openNewSegment).not.toHaveBeenCalled();
+    // No rows made it in since the spy threw.
+    vi.restoreAllMocks();
+    expect(db.listSnapshotsForThread(T)).toHaveLength(0);
   });
 
   it('rollback: sealCurrentSegment throws after DB write → snapshot deleted', async () => {
@@ -234,6 +236,33 @@ describe('SessionReset', () => {
 
     await expect(reset.reset(handler as never, T)).rejects.toThrow();
     expect(handler.setResetInFlight).toHaveBeenLastCalledWith(T, false);
+  });
+
+  it('after simulated restart, segmentIndex picks up from DB max + 1 (no UNIQUE collision)', async () => {
+    // Simulate the round-6 scenario: a reset happened before the restart,
+    // the snapshot row for (thread, segment_index=0) survived, and the
+    // in-memory DeliberationHandler rebuilt with a fresh segments=[empty]
+    // so its length - 1 is also 0.
+    const db = new ResetSnapshotDB(':memory:');
+    db.recordSnapshot({
+      snapshotId: 'pre-restart',
+      threadId: T,
+      segmentIndex: 0,
+      sealedAt: '2026-04-22T09:00:00Z',
+      summaryMarkdown: VALID_SUMMARY,
+      metadata: { decisionsCount: 0, openQuestionsCount: 0, blindReviewSessionId: null },
+    });
+    const facilitator = makeFacilitator(VALID_SUMMARY);
+    const handler = makeHandler(); // segments = [one empty open segment]
+    const reset = new SessionReset(db, facilitator as never);
+
+    const result = await reset.reset(handler as never, T);
+
+    // Must not collide with segment_index=0; must advance to 1.
+    expect(result.segmentIndex).toBe(1);
+    const rows = db.listSnapshotsForThread(T);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.segmentIndex).sort()).toEqual([0, 1]);
   });
 
   it('if rollback cleanup (deleteSnapshot) throws, original error surfaces with cause attached', async () => {

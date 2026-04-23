@@ -68,7 +68,19 @@ export class SessionReset {
       const summaryMarkdown = response.content;
       const parsed = parseSummaryMetadata(summaryMarkdown);
       const snapshotId = randomUUID();
-      const segmentIndex = handler.getSegments(threadId).length - 1;
+
+      // segmentIndex is persisted as a monotonically-increasing DB metadata
+      // column. Deriving it from the in-memory segments array alone would
+      // collide on the UNIQUE (thread_id, segment_index) constraint after a
+      // process restart, because the in-memory session rebuilds at index 0
+      // while the old snapshot rows still live in SQLite. Take max(existing)+1
+      // from the DB and fall back to the in-memory index only for the first
+      // reset on a fresh thread.
+      const existing = this.db.listSnapshotsForThread(threadId);
+      const segmentIndex =
+        existing.length > 0
+          ? Math.max(...existing.map((s) => s.segmentIndex)) + 1
+          : handler.getSegments(threadId).length - 1;
 
       const snapshot: ResetSnapshot = {
         snapshotId,
