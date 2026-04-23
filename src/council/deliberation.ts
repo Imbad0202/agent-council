@@ -232,6 +232,19 @@ export class DeliberationHandler {
     });
   }
 
+  // Undoes the last sealCurrentSegment on this thread. Used by SessionReset
+  // when openNewSegment fails post-seal so the thread doesn't get stuck
+  // writing into a sealed segment.
+  public unsealCurrentSegment(threadId: number): void {
+    const session = this.getSession(threadId);
+    const last = session.segments[session.segments.length - 1];
+    if (last.endedAt === null) {
+      throw new Error('cannot unseal: current segment is not sealed');
+    }
+    last.endedAt = null;
+    last.snapshotId = null;
+  }
+
   // Returns the most recent reset-snapshot summary for this thread, or null
   // if no prior /councilreset has happened (or resetSnapshotDB is not wired).
   // Live segment state is the source of truth for which snapshot is current —

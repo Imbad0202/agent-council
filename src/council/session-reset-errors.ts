@@ -7,3 +7,10 @@ export class BlindReviewActiveError extends Error {
     this.name = 'BlindReviewActiveError';
   }
 }
+
+export class ResetInProgressError extends Error {
+  constructor(threadId: number) {
+    super(`A /councilreset is already in progress for thread ${threadId}.`);
+    this.name = 'ResetInProgressError';
+  }
+}

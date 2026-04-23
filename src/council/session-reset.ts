@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type { CouncilMessage, ResetSnapshot } from '../types.js';
 import { buildResetSummaryPrompt, parseSummaryMetadata } from './session-reset-prompts.js';
-import { BlindReviewActiveError } from './session-reset-errors.js';
+import { BlindReviewActiveError, ResetInProgressError } from './session-reset-errors.js';
 
 export interface HandlerForReset {
   getCurrentSegmentMessages(threadId: number): readonly CouncilMessage[];
@@ -13,6 +13,7 @@ export interface HandlerForReset {
   setResetInFlight(threadId: number, v: boolean): void;
   sealCurrentSegment(threadId: number, snapshotId: string): void;
   openNewSegment(threadId: number): void;
+  unsealCurrentSegment(threadId: number): void;
 }
 
 export interface FacilitatorForReset {
@@ -41,7 +42,7 @@ export class SessionReset {
     }
 
     if (handler.isResetInFlight(threadId)) {
-      throw new Error(`reset in progress for thread ${threadId}`);
+      throw new ResetInProgressError(threadId);
     }
 
     handler.setResetInFlight(threadId, true);
@@ -84,12 +85,29 @@ export class SessionReset {
 
       this.db.recordSnapshot(snapshot);
 
+      // Seal first. If it fails, no in-memory mutation has happened yet —
+      // just roll back the DB row.
       try {
         handler.sealCurrentSegment(threadId, snapshotId);
+      } catch (sealErr) {
+        this.safeDeleteSnapshot(snapshotId, sealErr);
+        throw sealErr;
+      }
+
+      // Segment is now sealed in memory. If open fails, we must unseal to
+      // prevent runDeliberation from writing into a sealed segment, then
+      // roll back the DB row.
+      try {
         handler.openNewSegment(threadId);
-      } catch (err) {
-        this.db.deleteSnapshot(snapshotId);
-        throw err;
+      } catch (openErr) {
+        try {
+          handler.unsealCurrentSegment(threadId);
+        } catch {
+          // Best-effort — if unseal also fails the thread is already
+          // corrupt, but we still want to surface the open error.
+        }
+        this.safeDeleteSnapshot(snapshotId, openErr);
+        throw openErr;
       }
 
       return {
@@ -100,6 +118,19 @@ export class SessionReset {
       };
     } finally {
       handler.setResetInFlight(threadId, false);
+    }
+  }
+
+  // Rollback cleanup. If the delete itself throws (e.g. DB already closed),
+  // attach the cleanup failure as Error.cause on the original lifecycle
+  // error so callers still see the root cause.
+  private safeDeleteSnapshot(snapshotId: string, originalError: unknown): void {
+    try {
+      this.db.deleteSnapshot(snapshotId);
+    } catch (deleteErr) {
+      if (originalError instanceof Error && originalError.cause === undefined) {
+        (originalError as { cause?: unknown }).cause = deleteErr;
+      }
     }
   }
 }

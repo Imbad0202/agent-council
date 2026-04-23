@@ -68,4 +68,23 @@ describe('DeliberationHandler per-thread segments', () => {
     expect(handler.getSegments(T)[1].messages).toHaveLength(1);
     expect(handler.getCurrentSegmentMessages(T)[0].content).toBe('seg1');
   });
+
+  it('unsealCurrentSegment reverts endedAt and snapshotId', () => {
+    const { handler } = buildTestHandler();
+    handler.sealCurrentSegment(T, 'snap-a');
+    expect(handler.getSegments(T)[0].snapshotId).toBe('snap-a');
+    expect(handler.getSegments(T)[0].endedAt).not.toBeNull();
+    handler.unsealCurrentSegment(T);
+    expect(handler.getSegments(T)[0].snapshotId).toBeNull();
+    expect(handler.getSegments(T)[0].endedAt).toBeNull();
+    // After unseal, new messages still go into segment 0 (no new segment opened).
+    handler.pushMessageForTest(T, msg('m1', 'post-unseal'));
+    expect(handler.getSegments(T)).toHaveLength(1);
+    expect(handler.getCurrentSegmentMessages(T)).toHaveLength(1);
+  });
+
+  it('unsealCurrentSegment throws if current segment is not sealed', () => {
+    const { handler } = buildTestHandler();
+    expect(() => handler.unsealCurrentSegment(T)).toThrow(/not sealed/i);
+  });
 });

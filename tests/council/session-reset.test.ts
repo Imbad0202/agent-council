@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SessionReset } from '../../src/council/session-reset.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
-import { BlindReviewActiveError } from '../../src/council/session-reset-errors.js';
+import {
+  BlindReviewActiveError,
+  ResetInProgressError,
+} from '../../src/council/session-reset-errors.js';
 import type { CouncilMessage } from '../../src/types.js';
 
 const T = 42;
@@ -61,6 +64,11 @@ function makeHandler(init: {
         messages: [],
         snapshotId: null,
       });
+    }),
+    unsealCurrentSegment: vi.fn(() => {
+      const last = segments[segments.length - 1];
+      last.endedAt = null;
+      last.snapshotId = null;
     }),
   };
 }
@@ -173,7 +181,7 @@ describe('SessionReset', () => {
     expect(db.listSnapshotsForThread(T)).toHaveLength(0);
   });
 
-  it('rollback: openNewSegment throws → snapshot deleted (seal is not rolled back in memory)', async () => {
+  it('rollback: openNewSegment throws → snapshot deleted AND seal reverted', async () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler();
@@ -184,15 +192,21 @@ describe('SessionReset', () => {
 
     await expect(reset.reset(handler as never, T)).rejects.toThrow('open failed');
     expect(db.listSnapshotsForThread(T)).toHaveLength(0);
+    // Seal must be rolled back so the thread isn't stuck writing into a
+    // sealed segment (round-5 finding 1).
+    expect(handler.unsealCurrentSegment).toHaveBeenCalledWith(T);
+    const segs = handler.getSegments(T);
+    expect(segs[segs.length - 1].endedAt).toBeNull();
+    expect(segs[segs.length - 1].snapshotId).toBeNull();
   });
 
-  it('refuses concurrent reset (reset-in-flight flag)', async () => {
+  it('refuses concurrent reset (ResetInProgressError)', async () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler({ resetInFlight: true });
     const reset = new SessionReset(db, facilitator as never);
 
-    await expect(reset.reset(handler as never, T)).rejects.toThrow(/reset in progress/i);
+    await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(ResetInProgressError);
     expect(facilitator.respondDeterministic).not.toHaveBeenCalled();
   });
 
@@ -220,5 +234,27 @@ describe('SessionReset', () => {
 
     await expect(reset.reset(handler as never, T)).rejects.toThrow();
     expect(handler.setResetInFlight).toHaveBeenLastCalledWith(T, false);
+  });
+
+  it('if rollback cleanup (deleteSnapshot) throws, original error surfaces with cause attached', async () => {
+    const db = new ResetSnapshotDB(':memory:');
+    const facilitator = makeFacilitator(VALID_SUMMARY);
+    const handler = makeHandler();
+    handler.sealCurrentSegment.mockImplementation(() => {
+      throw new Error('seal failed');
+    });
+    // Induce deleteSnapshot failure by closing the DB between recordSnapshot
+    // and the rollback.
+    const originalRecord = db.recordSnapshot.bind(db);
+    vi.spyOn(db, 'recordSnapshot').mockImplementation((snap) => {
+      originalRecord(snap);
+      db.close();
+    });
+    const reset = new SessionReset(db, facilitator as never);
+
+    await expect(reset.reset(handler as never, T)).rejects.toMatchObject({
+      message: 'seal failed',
+      cause: expect.any(Error),
+    });
   });
 });
