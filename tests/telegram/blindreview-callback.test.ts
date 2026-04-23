@@ -147,4 +147,43 @@ describe('br-score callback handler', () => {
     expect(ctx.answerCallbackQuery).not.toHaveBeenCalled();
     expect(store.get(102)?.scores.size).toBe(0);
   });
+
+  // Round-10 codex finding [P1]: in non-forum Telegram chats (no topics)
+  // ctx.message.message_thread_id is undefined. The session is created under
+  // thread 0 via GatewayRouter's threadId ?? 0 normalization, but the
+  // callback used to fall back to ctx.chat.id and miss the stored session
+  // entirely — so every score button was a no-op in common group chats.
+  it('resolves threadId to 0 in non-forum chats (not ctx.chat.id)', async () => {
+    const { buildBlindReviewCallback } = await import('../../src/telegram/bot.js');
+    const store = new BlindReviewStore();
+    // Session created under thread 0, same as GatewayRouter does for
+    // ordinary text messages in non-forum groups.
+    store.create(0, ['a', 'b'], new Map([['a', 'critic'], ['b', 'advocate']]));
+    const sendFn = vi.fn();
+    const agentMeta = new Map([
+      ['a', { name: 'AgentA', role: 'critic' }],
+      ['b', { name: 'AgentB', role: 'advocate' }],
+    ]);
+
+    // Ctx simulates a non-forum group button press: ctx.chat.id=100 but no
+    // message_thread_id on the button's parent message.
+    const ctx: any = {
+      chat: { id: 100 },
+      callbackQuery: { data: 'br-score:Agent-A:3' },
+      match: ['br-score:Agent-A:3', 'Agent-A', '3'],
+      answerCallbackQuery: vi.fn(),
+      message: {}, // no message_thread_id → non-forum
+    };
+
+    const fn = buildBlindReviewCallback(100, store, sendFn, agentMeta);
+    await fn(ctx);
+
+    // Score landed under thread 0 where the session actually lives.
+    expect(store.get(0)?.scores.get('Agent-A')).toBe(3);
+    // The old ?? ctx.chat.id path would have looked up thread 100, missed,
+    // and returned an error via answerCallbackQuery. Assert the ack path
+    // took the success branch (text includes Recorded, not an error).
+    const ackCall = ctx.answerCallbackQuery.mock.calls[0];
+    expect(String(ackCall[0]?.text ?? '')).toMatch(/Recorded/);
+  });
 });

@@ -68,4 +68,54 @@ describe('/blindreview + /cancelreview commands', () => {
     expect(store.get(100)).toBeUndefined();
     expect(fakeCtx.reply).toHaveBeenCalled();
   });
+
+  // Round-8 codex finding [P2]: cancelreview has to emit so DeliberationHandler
+  // clears blindReviewSessionId. Otherwise /councilreset stays blocked forever
+  // after a cancel.
+  it('buildCancelReviewHandler emits blind-review.cancelled on the bus when a session is cancelled', async () => {
+    const { BlindReviewStore } = await import('../../src/council/blind-review.js');
+    const { buildCancelReviewHandler } = await import('../../src/telegram/bot.js');
+    const { EventBus } = await import('../../src/events/bus.js');
+
+    const store = new BlindReviewStore();
+    const THREAD = 555;
+    store.create(THREAD, ['a', 'b'], new Map([['a', 'critic'], ['b', 'advocate']]));
+
+    const bus = new EventBus();
+    const cancelled: { threadId: number }[] = [];
+    bus.on('blind-review.cancelled', (payload) => { cancelled.push(payload); });
+
+    const fakeCtx: any = {
+      chat: { id: 100 },
+      from: { is_bot: false },
+      reply: vi.fn(),
+      message: { message_thread_id: THREAD },
+    };
+
+    const fn = buildCancelReviewHandler(100, store, bus);
+    await fn(fakeCtx);
+    expect(cancelled).toEqual([{ threadId: THREAD }]);
+  });
+
+  it('buildCancelReviewHandler does NOT emit when no pending session (no-op cancel)', async () => {
+    const { BlindReviewStore } = await import('../../src/council/blind-review.js');
+    const { buildCancelReviewHandler } = await import('../../src/telegram/bot.js');
+    const { EventBus } = await import('../../src/events/bus.js');
+
+    const store = new BlindReviewStore();
+    const bus = new EventBus();
+    const cancelled: { threadId: number }[] = [];
+    bus.on('blind-review.cancelled', (payload) => { cancelled.push(payload); });
+
+    const fakeCtx: any = {
+      chat: { id: 100 },
+      from: { is_bot: false },
+      reply: vi.fn(),
+      message: { message_thread_id: 777 },
+    };
+
+    const fn = buildCancelReviewHandler(100, store, bus);
+    await fn(fakeCtx);
+    expect(cancelled).toHaveLength(0);
+  });
 });

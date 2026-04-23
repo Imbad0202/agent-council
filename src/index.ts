@@ -11,6 +11,11 @@ import { EventBus } from './events/bus.js';
 import { GatewayRouter } from './gateway/router.js';
 import { IntentGate } from './council/intent-gate.js';
 import { DeliberationHandler } from './council/deliberation.js';
+import { SessionReset } from './council/session-reset.js';
+import { ResetSnapshotDB } from './storage/reset-snapshot-db.js';
+import { CliCommandHandler } from './adapters/cli-commands.js';
+import { routeCliInput, deriveCliThreadId } from './adapters/cli-dispatch.js';
+import { CliSessionManager } from './adapters/cli-sessions.js';
 import { BlindReviewDB } from './council/blind-review-db.js';
 import { PvgRotateStore } from './council/pvg-rotate-store.js';
 import { PvgRotateDB } from './council/pvg-rotate-db.js';
@@ -23,6 +28,7 @@ import {
 } from './telegram/critique-callback.js';
 import type { CritiqueUiAdapter } from './adapters/telegram.js';
 import type { DefaultCritiquePromptAdapter } from './adapters/cli.js';
+import type { SessionResetAdapter } from './adapters/telegram.js';
 import { FacilitatorAgent } from './council/facilitator.js';
 import { ActiveRecall } from './memory/active-recall.js';
 import { ExecutionDispatcher } from './execution/dispatcher.js';
@@ -38,6 +44,10 @@ function hasDefaultPromptUser(a: unknown): a is DefaultCritiquePromptAdapter {
 
 function hasSetCritiqueUiWiring(a: unknown): a is CritiqueUiAdapter {
   return typeof (a as CritiqueUiAdapter).setCritiqueUiWiring === 'function';
+}
+
+function hasSetSessionResetWiring(a: unknown): a is SessionResetAdapter {
+  return typeof (a as SessionResetAdapter).setSessionResetWiring === 'function';
 }
 
 // Pick the right promptUser (and matching cancelPrompt) for the adapter:
@@ -148,9 +158,12 @@ async function main() {
   new IntentGate(bus, mainProvider, councilConfig.systemModels.intentClassification);
   console.log('IntentGate initialized');
 
-  // Memory layer
+  // Memory layer — DB instance is shared with CliCommandHandler below when
+  // the CLI adapter is active so /memories / /memory / /forget see the same
+  // rows the deliberation path writes.
+  let memoryDb: MemoryDB | undefined;
   if (councilConfig.memory) {
-    const memoryDb = new MemoryDB(resolve(councilConfig.memory.dbPath));
+    memoryDb = new MemoryDB(resolve(councilConfig.memory.dbPath));
     const activeRecall = new ActiveRecall(bus, memoryDb);
     const tracker = new UsageTracker(memoryDb);
 
@@ -169,6 +182,7 @@ async function main() {
   const pvgRotateStore = new PvgRotateStore();
   const pvgRotateDB = new PvgRotateDB(resolve('data/council.db'));
   const critiqueStore = new HumanCritiqueStore();
+  const resetSnapshotDB = new ResetSnapshotDB(resolve('data/council.db'));
   const deliberationHandler = new DeliberationHandler(
     bus,
     peerWorkers,
@@ -181,9 +195,19 @@ async function main() {
         : undefined,
       pvgRotateStore,
       critiqueStore,
+      resetSnapshotDB,
     },
   );
   console.log('DeliberationHandler initialized');
+
+  // Session reset — requires a facilitatorWorker. If none is configured,
+  // /councilreset stays unwired and the command reports "not configured".
+  const sessionReset = facilitatorWorker
+    ? new SessionReset(resetSnapshotDB, facilitatorWorker)
+    : undefined;
+  if (sessionReset) {
+    console.log('SessionReset initialized');
+  }
 
   // Wire BlindReviewDB + persist-failed event
   const blindReviewDB = new BlindReviewDB(resolve('data/council.db'));
@@ -201,6 +225,29 @@ async function main() {
       db: pvgRotateDB,
       sendFn: (agentId: string, content: string, threadId?: number) => adapter.send(agentId, content, { agentName: '' }, threadId),
       bus,
+    });
+  }
+
+  // Wire /councilreset + /councilhistory into the listener bot (Telegram
+  // only; adapters without setSessionResetWiring silently skip).
+  //
+  // Round-15 codex finding [P2]: previously this whole block was gated on
+  // `sessionReset`, which requires a facilitator agent. Deployments without
+  // a facilitator had `sessionReset === undefined` AND the adapter never
+  // saw the snapshot DB, so the listener bot didn't register /councilreset
+  // or /councilhistory at all — typing them fell through to the catch-all
+  // text handler and started a deliberation round. Now we always pass the
+  // DB when the adapter supports session-reset wiring; reset /
+  // deliberationHandler are only included when facilitator is configured.
+  // The command handlers in telegram/bot.ts branch on those optional
+  // fields: /councilhistory is fully functional (DB-only dependency) and
+  // /councilreset replies "not configured" if facilitator is missing.
+  if (hasSetSessionResetWiring(adapter)) {
+    adapter.setSessionResetWiring({
+      db: resetSnapshotDB,
+      ...(sessionReset
+        ? { reset: sessionReset, deliberationHandler }
+        : {}),
     });
   }
 
@@ -266,11 +313,60 @@ async function main() {
   const router = new GatewayRouter(bus, sendFn, councilConfig);
   console.log('GatewayRouter initialized (event-driven)');
 
+  // Round-14 codex finding [P2-W]: derive a per-process threadId for CLI
+  // so different CLI invocations don't share /councilreset history via the
+  // round-9 restart-safe DB fallback. Computed once per process so the
+  // wiring below and the adapter callback further down see the same value.
+  const cliThreadId = args.adapter === 'cli' ? deriveCliThreadId() : 0;
+
+  // CLI command dispatcher (scoped to CLI; Telegram has its own bot.command
+  // registration path in setupListener).
+  const cliCommandHandler =
+    args.adapter === 'cli'
+      ? new CliCommandHandler(
+          new CliSessionManager(resolve('data')),
+          // Reuse the memoryDb opened by the Memory layer so both paths see
+          // the same rows. When the Memory layer is disabled, fall back to
+          // the default brain.db path (memory schema) rather than
+          // council.db, which belongs to BlindReview / PvgRotate / Reset
+          // snapshot schemas and has a different storage boundary.
+          memoryDb ?? new MemoryDB(resolve('data/brain.db')),
+          (line) => console.log(line),
+          // Round-16 codex finding [P2-CLI]: round-15 fixed Telegram so
+          // /councilhistory works in facilitator-less deployments
+          // (DB-only dependency), but the CLI ternary kept passing `{}`
+          // when sessionReset was undefined — symmetric bug. Now always
+          // pass resetSnapshotDB + threadId; sessionReset/
+          // deliberationHandler are added only when facilitator wiring
+          // exists. CliCommandHandler.councilReset already replies
+          // "not configured" when those are missing, and councilHistory
+          // works fully on DB + threadId alone.
+          {
+            resetSnapshotDB,
+            // Per-process CLI threadId (round-14 P2-W fix).
+            threadId: cliThreadId,
+            ...(sessionReset
+              ? { sessionReset, deliberationHandler }
+              : {}),
+          },
+        )
+      : undefined;
+
   // ── Adapter startup ──────────────────────────────────────────────────
 
   console.log('Agent Council v0.2.1 starting...');
 
   await adapter.start((msg) => {
+    if (cliCommandHandler) {
+      // CLI: route slash commands to CliCommandHandler; everything else to
+      // router. Use the per-process cliThreadId (round-14 P2-W) so the
+      // adapter callback and the CliCommandHandler reset wiring agree on
+      // which thread this CLI session lives on. The CLI adapter currently
+      // always passes msg.threadId === 0, but we override regardless to
+      // make the boundary explicit at the wiring layer.
+      void routeCliInput(msg.content, router, cliCommandHandler, cliThreadId);
+      return;
+    }
     router.handleHumanMessage({
       id: `${args.adapter}-${Date.now()}`,
       role: 'human',

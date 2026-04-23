@@ -322,6 +322,133 @@ describe('DeliberationHandler — blind-review turn recording', () => {
     expect(turnB!.model).toBe('claude-sonnet-4-6');
   });
 
+  // Round-11 codex finding [P2]: BlindReviewStore.create() populates the
+  // store synchronously, but session.blindReviewSessionId is only set when
+  // the 'blind-review.started' event listener fires — which only happens
+  // *after* sendKeyboardFn awaits successfully. If sendKeyboardFn rejects
+  // (Telegram rate-limit, network blip, bot down), the store still holds
+  // a pending session (so a fresh /blindreview is rejected), but the
+  // per-thread guard reads null (so /councilreset is wrongly allowed).
+  // Fix: set the guard immediately after store.create() succeeds; on
+  // sendKeyboardFn failure roll back both (store.delete + clear the guard).
+  it('clears blindReviewSessionId guard and store entry when sendKeyboardFn rejects', async () => {
+    const bus = new EventBus();
+    const workers = [
+      makeWorkerWithTier('agent-a', 'Agent A', 'high', 'claude-opus-4-7'),
+      makeWorkerWithTier('agent-b', 'Agent B', 'low', 'claude-sonnet-4-6'),
+    ];
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+    // Reject the keyboard send to simulate Telegram failure mid-round.
+    const sendKeyboardFn = vi.fn().mockRejectedValue(new Error('telegram rate limit'));
+    const handler = new DeliberationHandler(bus, workers, minConfig, sendFn, {
+      sendKeyboardFn,
+    });
+
+    const store = handler.getBlindReviewStore();
+    const threadId = 101;
+
+    const message: CouncilMessage = {
+      id: 'msg-blind-fail',
+      role: 'human',
+      content: 'Evaluate again',
+      timestamp: Date.now(),
+      threadId,
+      blindReview: true,
+    };
+
+    const done = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', () => resolve());
+    });
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId,
+      message,
+    });
+
+    await done;
+
+    // After the failed sendKeyboard:
+    //  - the per-thread guard MUST be null (otherwise /councilreset stays
+    //    wrongly blocked while the store also wrongly allows the path)
+    //  - the store entry MUST be cleared (otherwise a retry of /blindreview
+    //    would be rejected as "pending session exists")
+    expect(handler.getBlindReviewSessionId(threadId)).toBeNull();
+    expect(store.get(threadId)).toBeUndefined();
+  });
+
+  // Round-12 codex finding [P1-A]: round-11's blind-review fix only caught
+  // sendKeyboardFn failures. Any earlier await in the round (agent respond,
+  // sendFn, debrief broadcast, ...) throwing would exit runDeliberation
+  // with the store entry and per-thread guard still populated, wedging
+  // both /blindreview ("pending session exists") and /councilreset
+  // ("blind-review pending"). Fix: rollback in finally if the keyboard was
+  // never successfully posted, regardless of which await blew up.
+  it('rolls back blind-review state when an agent respond() throws before keyboard send', async () => {
+    const bus = new EventBus();
+    const workers = [
+      makeWorkerWithTier('agent-a', 'Agent A', 'high', 'claude-opus-4-7'),
+      makeWorkerWithTier('agent-b', 'Agent B', 'low', 'claude-sonnet-4-6'),
+    ];
+    // agent-a's respond throws — this happens BEFORE the sendKeyboardFn
+    // catch block, so the round-11 fix doesn't cover it.
+    (workers[0].respond as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('provider 503'),
+    );
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+    const sendKeyboardFn = vi.fn().mockResolvedValue(undefined);
+    const handler = new DeliberationHandler(bus, workers, minConfig, sendFn, {
+      sendKeyboardFn,
+    });
+
+    const store = handler.getBlindReviewStore();
+    const threadId = 102;
+
+    const message: CouncilMessage = {
+      id: 'msg-blind-throw',
+      role: 'human',
+      content: 'Evaluate this',
+      timestamp: Date.now(),
+      threadId,
+      blindReview: true,
+    };
+
+    // intent.classified → runDeliberation is fire-and-forget (the listener
+    // doesn't await), so an agent throw becomes an unhandled rejection.
+    // Swallow it just for this test — the production behaviour is the same;
+    // observability of pre-existing unhandled rejections is out of scope for
+    // round-12 P1-A.
+    const swallowReject = (err: Error): void => {
+      if (err.message !== 'provider 503') throw err;
+    };
+    process.on('unhandledRejection', swallowReject as never);
+
+    const finished = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', () => resolve());
+      // Fallback: runDeliberation aborts before deliberation.ended on this
+      // path, so a short timeout lets the finally block settle.
+      setTimeout(resolve, 200);
+    });
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId,
+      message,
+    });
+
+    await finished;
+    process.off('unhandledRejection', swallowReject as never);
+
+    // Both must be cleared so the user can retry /blindreview AND
+    // /councilreset is no longer wrongly blocked.
+    expect(handler.getBlindReviewSessionId(threadId)).toBeNull();
+    expect(store.get(threadId)).toBeUndefined();
+    // sendKeyboardFn was never reached — the round aborted earlier.
+    expect(sendKeyboardFn).not.toHaveBeenCalled();
+  });
+
   it('does NOT record turns when blindReview is false', async () => {
     const bus = new EventBus();
     const workers = [
@@ -358,5 +485,49 @@ describe('DeliberationHandler — blind-review turn recording', () => {
     // No blind-review session was created, so store returns null
     expect(store.getLatestTurnFor(threadId, 'agent-a')).toBeNull();
     expect(store.getLatestTurnFor(threadId, 'agent-b')).toBeNull();
+  });
+
+  // Round-9 codex finding [P1]: round-7 added "reset refuses during
+  // deliberation" but NOT the symmetric "deliberation refuses during reset".
+  // If a user sends a message while /councilreset is waiting on the
+  // facilitator summary call, runDeliberation would happily push it into the
+  // current segment and the subsequent sealCurrentSegment would persist a
+  // snapshot that no longer matches the sealed transcript.
+  it('skips deliberation and notifies the user when a reset is in flight', async () => {
+    const bus = new EventBus();
+    const workers = [makeWorker('agent-a', 'Agent A'), makeWorker('agent-b', 'Agent B')];
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+    const handler = new DeliberationHandler(bus, workers, minConfig, sendFn);
+
+    const threadId = 7;
+    // Materialize the session, then flag reset-in-flight to simulate an
+    // in-progress /councilreset waiting on the facilitator.
+    handler.isResetInFlight(threadId);
+    handler.setResetInFlight(threadId, true);
+
+    const agentResponded: EventMap['agent.responded'][] = [];
+    bus.on('agent.responded', (payload) => agentResponded.push(payload));
+
+    const message = makeMessage('user message during reset', threadId);
+
+    // Give the handler a moment to run and emit. Don't wait on
+    // deliberation.ended — the whole point is it should NOT fire.
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId,
+      message,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(agentResponded).toHaveLength(0);
+    for (const w of workers) {
+      expect(w.respond).not.toHaveBeenCalled();
+    }
+    // User gets a clear reply that the message was skipped.
+    const replies = sendFn.mock.calls.map((call) => String(call[1] ?? ''));
+    expect(replies.some((r) => /reset/i.test(r))).toBe(true);
+    // Current segment should NOT contain the dropped message.
+    expect(handler.getCurrentSegmentMessages(threadId)).toHaveLength(0);
   });
 });

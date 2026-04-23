@@ -58,6 +58,7 @@ export class AgentWorker {
     challengePrompt?: string,
     complexity?: Complexity,
     rotationMode = false,
+    snapshotPrefix?: string,
   ): Promise<ProviderResponse> {
     const { stable, volatile } = buildSystemPromptParts(this.config, this.memorySyncPath, role, rotationMode);
     const systemPrompt = `${stable}\n\n---\n\n${volatile}`;
@@ -65,7 +66,21 @@ export class AgentWorker {
       ? [{ text: `${stable}\n\n---\n\n`, cache: true }, { text: volatile }]
       : undefined;
 
-    const messages: ProviderMessage[] = conversationHistory.map((msg) => {
+    const effectiveHistory: CouncilMessage[] = snapshotPrefix
+      ? [
+          {
+            id: `snapshot-prefix-${Date.now()}`,
+            role: 'human',
+            content:
+              `Prior segment summary (from /councilreset):\n\n${snapshotPrefix}\n\n---\n\n` +
+              `The conversation below is the new segment. Treat the summary above as shared context.`,
+            timestamp: Date.now(),
+          },
+          ...conversationHistory,
+        ]
+      : conversationHistory;
+
+    const messages: ProviderMessage[] = effectiveHistory.map((msg) => {
       if (msg.role === 'human') {
         return { role: 'user' as const, content: msg.content };
       }
@@ -111,6 +126,71 @@ export class AgentWorker {
     return {
       ...response,
       tierUsed: complexity ?? 'unknown',
+      modelUsed: model,
+    };
+  }
+
+  /**
+   * Low-temperature response for reset-summary generation. Pins
+   * temperature to 0 to reduce output variance and disables thinking
+   * (Anthropic requires temperature=1 when thinking is enabled).
+   *
+   * This is NOT byte-level determinism — no seed, no top-p/top-k control,
+   * and Gemini clamps near-zero with residual variance. The name emphasises
+   * "deterministic mode" as in "maximum-determinism config available",
+   * not a byte-identical guarantee. Callers (SessionReset) treat the output
+   * as plain message content, not a cache key.
+   *
+   * Stats bookkeeping matches respond() so facilitator reset-summary calls
+   * surface in stats.modelUsage for cost/telemetry dashboards.
+   */
+  async respondDeterministic(
+    conversationHistory: CouncilMessage[],
+    role: AgentRole,
+  ): Promise<ProviderResponse> {
+    const { stable, volatile } = buildSystemPromptParts(this.config, this.memorySyncPath, role, false);
+    const systemPrompt = `${stable}\n\n---\n\n${volatile}`;
+
+    const messages: ProviderMessage[] = conversationHistory.map((msg) => {
+      if (msg.role === 'human') {
+        return { role: 'user' as const, content: msg.content };
+      }
+      if (msg.role === 'human-critique') {
+        const label = `[Human critique${msg.critiqueStance ? ` · ${msg.critiqueStance}` : ''}]`;
+        return { role: 'user' as const, content: `${label}: ${msg.content}` };
+      }
+      if (msg.agentId === this.id) {
+        return { role: 'assistant' as const, content: msg.content };
+      }
+      return { role: 'user' as const, content: `[${msg.agentId}]: ${msg.content}` };
+    });
+
+    const model = this.resolveModel();
+
+    const response = await this.provider.chat(messages, {
+      model,
+      temperature: 0,
+      systemPrompt,
+    });
+
+    this.stats.responseCount++;
+    const totalLength =
+      this.stats.averageLength * (this.stats.responseCount - 1) + response.content.length;
+    this.stats.averageLength = totalLength / this.stats.responseCount;
+
+    if (response.skip) {
+      this.stats.skipCount++;
+    }
+
+    if (!this.stats.modelUsage[model]) {
+      this.stats.modelUsage[model] = { calls: 0, inputTokens: 0, outputTokens: 0 };
+    }
+    this.stats.modelUsage[model].calls++;
+    this.stats.modelUsage[model].inputTokens += response.tokensUsed.input;
+    this.stats.modelUsage[model].outputTokens += response.tokensUsed.output;
+
+    return {
+      ...response,
       modelUsed: model,
     };
   }

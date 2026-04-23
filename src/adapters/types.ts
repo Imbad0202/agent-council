@@ -27,6 +27,7 @@ export interface OutputAdapter {
   setBlindReviewWiring?: (wiring: unknown) => void;
   setPvgRotateWiring?: (wiring: unknown) => void;
   setHumanCritiqueWiring?: (wiring: unknown) => void;
+  setSessionResetWiring?: (wiring: unknown) => void;
   handleCritiqueRequest?: (req: {
     threadId: number;
     prevAgent: string;

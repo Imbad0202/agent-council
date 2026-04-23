@@ -1,5 +1,6 @@
 import type { EventBus } from '../events/bus.js';
 import type { AgentWorker } from '../worker/agent-worker.js';
+import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type {
   CouncilConfig,
   CouncilMessage,
@@ -8,6 +9,7 @@ import type {
   IntentType,
   ResponseClassification,
   ProviderResponse,
+  HistorySegment,
 } from '../types.js';
 import { TurnManager } from '../gateway/turn-manager.js';
 import { AntiSycophancyEngine } from './anti-sycophancy.js';
@@ -48,12 +50,29 @@ type SendFn = (agentId: string, content: string, threadId?: number) => Promise<v
 type SendKeyboardFn = (agentId: string, content: string, keyboard: import('grammy').InlineKeyboard, threadId?: number) => Promise<void>;
 
 interface SessionState {
-  conversationHistory: CouncilMessage[];
+  segments: HistorySegment[];
   currentParticipants: string[];
   turnManager: TurnManager;
   antiSycophancy: AntiSycophancyEngine;
   pendingPatternInjection: { targetAgent: string; prompt: string } | null;
   critiqueLog: CritiqueSessionLog;
+  blindReviewSessionId: string | null;
+  currentTopic: string;
+  resetInFlight: boolean;
+  // True while runDeliberation is mid-flight for this thread. SessionReset
+  // checks this before sealing so a reset can't snapshot one transcript and
+  // seal a later one — see round-7 audit finding.
+  deliberationInFlight: boolean;
+  // Round-11 codex finding [P1]: a message that has been emitted via
+  // EventBus 'message.received' is "in flight" until IntentGate's async
+  // classify() resolves and emits 'intent.classified'. EventBus does not
+  // await listeners, so this window is invisible to deliberationInFlight
+  // (which only flips inside runDeliberation, triggered by intent.classified).
+  // We track CouncilMessage.id values here: add on message.received, remove
+  // on intent.classified. The reset guard rejects when this set is non-empty.
+  // Keying by message.id (not a counter) keeps add/remove 1:1 even if
+  // bus events fire out of order or duplicate.
+  pendingClassifications: Set<string>;
 }
 
 export class DeliberationHandler {
@@ -67,6 +86,7 @@ export class DeliberationHandler {
   private pvgRotateStore: PvgRotateStore;
   private critiqueStore: HumanCritiqueStore | undefined;
   private critiqueTimeoutMs: number;
+  private resetSnapshotDB: ResetSnapshotDB | undefined;
   private sessions: Map<number, SessionState> = new Map();
 
   public getBlindReviewStore(): BlindReviewStore {
@@ -99,6 +119,7 @@ export class DeliberationHandler {
       pvgRotateStore?: PvgRotateStore;
       critiqueStore?: HumanCritiqueStore;
       critiqueTimeoutMs?: number;
+      resetSnapshotDB?: ResetSnapshotDB;
     },
   ) {
     this.bus = bus;
@@ -110,6 +131,7 @@ export class DeliberationHandler {
     this.pvgRotateStore = options?.pvgRotateStore ?? new PvgRotateStore();
     this.critiqueStore = options?.critiqueStore;
     this.critiqueTimeoutMs = options?.critiqueTimeoutMs ?? DEFAULT_CRITIQUE_TIMEOUT_MS;
+    this.resetSnapshotDB = options?.resetSnapshotDB;
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
@@ -136,7 +158,7 @@ export class DeliberationHandler {
           assignedRole: 'synthesizer',
         },
       };
-      session.conversationHistory.push(facilitatorMsg);
+      this.currentMessages(session).push(facilitatorMsg);
     });
 
     // Subscribe to pattern.detected — store pending injection
@@ -149,20 +171,209 @@ export class DeliberationHandler {
         prompt: PATTERN_INJECTION_PROMPTS[payload.pattern],
       };
     });
+
+    // Track blind-review session id on per-thread SessionState so /councilreset
+    // can refuse resets while a blind-review round is still unrevealed.
+    this.bus.on('blind-review.started', ({ threadId, sessionId }) => {
+      const session = this.sessions.get(threadId);
+      if (!session) return;
+      session.blindReviewSessionId = sessionId;
+    });
+
+    this.bus.on('blind-review.revealed', ({ threadId }) => {
+      const session = this.sessions.get(threadId);
+      if (!session) return;
+      session.blindReviewSessionId = null;
+    });
+
+    // Round-8 codex finding [P2]: `/cancelreview` has to clear the guard
+    // too, otherwise /councilreset stays blocked on the thread forever.
+    // Mirrors the `revealed` listener exactly.
+    this.bus.on('blind-review.cancelled', ({ threadId }) => {
+      const session = this.sessions.get(threadId);
+      if (!session) return;
+      session.blindReviewSessionId = null;
+    });
+
+    // Round-11 codex finding [P1]: track classifications-in-flight so the
+    // reset guard sees messages that have been emitted but not yet
+    // classified. Materialize the session via getSession (not sessions.get)
+    // because message.received is the first event a brand-new thread will
+    // see — sessions.get would no-op and the marker would be lost.
+    this.bus.on('message.received', ({ message, threadId }) => {
+      this.getSession(threadId).pendingClassifications.add(message.id);
+    });
+    this.bus.on('intent.classified', ({ message, threadId }) => {
+      this.getSession(threadId).pendingClassifications.delete(message.id);
+    });
   }
 
   private getSession(threadId: number): SessionState {
     if (!this.sessions.has(threadId)) {
       this.sessions.set(threadId, {
-        conversationHistory: [],
+        segments: [
+          { startedAt: new Date().toISOString(), endedAt: null, messages: [], snapshotId: null },
+        ],
         currentParticipants: this.workers.map((w) => w.id),
         turnManager: new TurnManager(this.config.gateway),
         antiSycophancy: new AntiSycophancyEngine(this.config.antiSycophancy),
         pendingPatternInjection: null,
         critiqueLog: { agentTurns: 0, humanCritiques: [], stanceShiftsInducedByHuman: 0 },
+        blindReviewSessionId: null,
+        currentTopic: '',
+        resetInFlight: false,
+        deliberationInFlight: false,
+        pendingClassifications: new Set(),
       });
     }
     return this.sessions.get(threadId)!;
+  }
+
+  // Internal write path. External readers use getCurrentSegmentMessages which
+  // returns the readonly view declared on HistorySegment. The cast is the
+  // single mutation boundary — keep it here.
+  private currentMessages(session: SessionState): CouncilMessage[] {
+    return session.segments[session.segments.length - 1].messages as CouncilMessage[];
+  }
+
+  public getSegments(threadId: number): readonly Readonly<HistorySegment>[] {
+    return this.getSession(threadId).segments;
+  }
+
+  public getCurrentSegmentMessages(threadId: number): readonly CouncilMessage[] {
+    const segs = this.getSession(threadId).segments;
+    return segs[segs.length - 1].messages;
+  }
+
+  public sealCurrentSegment(threadId: number, snapshotId: string): void {
+    const session = this.getSession(threadId);
+    const last = session.segments[session.segments.length - 1];
+    if (last.endedAt !== null) {
+      throw new Error(`segment ${session.segments.length - 1} already sealed`);
+    }
+    last.endedAt = new Date().toISOString();
+    last.snapshotId = snapshotId;
+  }
+
+  public openNewSegment(threadId: number): void {
+    const session = this.getSession(threadId);
+    const last = session.segments[session.segments.length - 1];
+    if (last.endedAt === null) {
+      throw new Error('must seal current segment before opening a new one');
+    }
+    session.segments.push({
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      messages: [],
+      snapshotId: null,
+    });
+    // Round-13 codex finding [P2-X]: topic is segment-level. Clear it
+    // here so the next segment's first human turn re-initialises it
+    // (runDeliberation only writes when currentTopic === '').
+    session.currentTopic = '';
+
+    // Round-14 codex finding [P2-V]: AntiSycophancyEngine's classification
+    // history is segment-level too. If the sealed segment ended in an
+    // agreement streak, leaving the state intact would make the first
+    // post-reset round fire a convergence prompt / HITL invite based on
+    // the OLD segment. Reset the engine so the new segment starts from a
+    // neutral convergence state. Matches the currentTopic clear above:
+    // reset boundary == "forget segment-scoped heuristic state."
+    session.antiSycophancy.reset();
+  }
+
+  // Undoes the last sealCurrentSegment on this thread. Used by SessionReset
+  // when openNewSegment fails post-seal so the thread doesn't get stuck
+  // writing into a sealed segment.
+  public unsealCurrentSegment(threadId: number): void {
+    const session = this.getSession(threadId);
+    const last = session.segments[session.segments.length - 1];
+    if (last.endedAt === null) {
+      throw new Error('cannot unseal: current segment is not sealed');
+    }
+    last.endedAt = null;
+    last.snapshotId = null;
+  }
+
+  // Returns the most recent reset-snapshot summary for this thread, or null
+  // if no prior /councilreset has happened (or resetSnapshotDB is not wired).
+  // Live segment state is preferred source of truth for which snapshot is
+  // current — the DB is used to dereference the id. If SessionReset rolls
+  // back a failed seal/open by deleting the snapshot row, getSnapshot()
+  // returns null and we fall through to the next older sealed segment.
+  //
+  // Round-9 codex finding [P2]: after a process restart the in-memory
+  // session rebuilds with a fresh open segment (snapshotId null), so the
+  // in-memory walk misses the snapshot row that still lives in SQLite.
+  // Fall back to the DB's most recent snapshot for this thread so the
+  // carry-forward feature survives restart — which is the whole point.
+  public getSnapshotPrefix(threadId: number): string | null {
+    if (!this.resetSnapshotDB) return null;
+    const session = this.getSession(threadId);
+    for (let i = session.segments.length - 1; i >= 0; i--) {
+      const snapshotId = session.segments[i].snapshotId;
+      if (!snapshotId) continue;
+      const snap = this.resetSnapshotDB.getSnapshot(snapshotId);
+      if (snap) return snap.summaryMarkdown;
+    }
+    // Post-restart DB fallback: listSnapshotsForThread returns rows ordered
+    // by segment_index ASC, so the last element is the most recent snapshot.
+    const rows = this.resetSnapshotDB.listSnapshotsForThread(threadId);
+    if (rows.length > 0) {
+      return rows[rows.length - 1].summaryMarkdown;
+    }
+    return null;
+  }
+
+  public getBlindReviewSessionId(threadId: number): string | null {
+    return this.getSession(threadId).blindReviewSessionId;
+  }
+
+  public getCurrentTopic(threadId: number): string {
+    return this.getSession(threadId).currentTopic;
+  }
+
+  public setResetInFlight(threadId: number, v: boolean): void {
+    this.getSession(threadId).resetInFlight = v;
+  }
+
+  public isResetInFlight(threadId: number): boolean {
+    return this.getSession(threadId).resetInFlight;
+  }
+
+  public isDeliberationInFlight(threadId: number): boolean {
+    return this.getSession(threadId).deliberationInFlight;
+  }
+
+  public hasPendingClassifications(threadId: number): boolean {
+    return this.getSession(threadId).pendingClassifications.size > 0;
+  }
+
+  // Test-only: lets deliberation-segments.test.ts exercise segment lifecycle
+  // without running a full runDeliberation round. Production callers push via
+  // the private currentMessages() helper inside runDeliberation.
+  public pushMessageForTest(threadId: number, m: CouncilMessage): void {
+    this.currentMessages(this.getSession(threadId)).push(m);
+  }
+
+  // Test-only accessors for round-14 P2-V (AntiSycophancyEngine state must
+  // be cleared on openNewSegment). Production code consults the convergence
+  // state via AntiSycophancyEngine.shouldInviteHumanCritique /
+  // checkConvergence inside runDeliberation; exposing the boolean through
+  // the handler lets the segment-boundary test assert the leak is plugged
+  // without having to exercise a full round.
+  public injectAntiSycophancyClassificationsForTest(
+    threadId: number,
+    classifications: ResponseClassification[],
+  ): void {
+    const engine = this.getSession(threadId).antiSycophancy;
+    for (const c of classifications) {
+      engine.recordClassification(c);
+    }
+  }
+
+  public isConvergingForTest(threadId: number): boolean {
+    return this.getSession(threadId).antiSycophancy.shouldInviteHumanCritique();
   }
 
   // Open a critique window before the next agent speaks. Resolves to the
@@ -207,14 +418,52 @@ export class DeliberationHandler {
   ): Promise<void> {
     const session = this.getSession(threadId);
 
-    // Reset per-round critique stats. The conversationHistory is retained
-    // across rounds for context continuity, but collaboration-depth metrics
-    // are scoped to THIS round — a user asking a follow-up shouldn't inherit
-    // last round's acceptance ratio.
+    // Round-9 codex finding [P1]: round-7 only added the "reset refuses
+    // during deliberation" direction. Without this symmetric guard, a
+    // human message arriving while /councilreset is waiting on the
+    // facilitator summary would be pushed into the segment that's about
+    // to be sealed, so the persisted snapshot diverges from the sealed
+    // transcript. Drop the message with a user-facing notice instead of
+    // queuing — the new segment opens right after the reset finishes
+    // and the user can retype.
+    if (session.resetInFlight) {
+      // Hardcode 'facilitator' (not workers[0].id) — this is a system notice,
+      // not a response from any specific agent. Matches the convention used
+      // for facilitator.intervened / facilitator summary messages.
+      await this.sendFn(
+        'facilitator',
+        '⏳ /councilreset is in progress on this thread. Your message was not picked up — please resend once the reset confirmation lands.',
+        threadId,
+      );
+      return;
+    }
+
+    // Mark deliberation in-flight so SessionReset can refuse to seal a
+    // segment that is still growing. Agent responses are pushed into
+    // currentMessages mid-round (see the agent turn loop below) and
+    // facilitator.intervened events can push async, so the flag must
+    // cover the entire method. Cleared in the finally at the end so a
+    // thrown agent / send error still releases it and unblocks future
+    // /councilreset calls.
+    session.deliberationInFlight = true;
+
+    // Hoisted for finally-block rollback (round-12 P1-A). blindReviewSessionId
+    // is set when BlindReviewStore.create() succeeds; blindReviewKeyboardSent
+    // flips true only after the scoring keyboard posts AND blind-review.started
+    // is emitted. The finally treats undefined sessionId as "no rollback
+    // needed" and any non-undefined + !sent combination as "rollback".
+    let blindReviewSessionId: string | undefined;
+    let blindReviewKeyboardSent = false;
+
+    try {
+    // Reset per-round critique stats. Segment messages are retained across
+    // rounds for context continuity, but collaboration-depth metrics are
+    // scoped to THIS round — a user asking a follow-up shouldn't inherit last
+    // round's acceptance ratio.
     session.critiqueLog = { agentTurns: 0, humanCritiques: [], stanceShiftsInducedByHuman: 0 };
 
-    // Push human message to history
-    session.conversationHistory.push(message);
+    // Push human message to current segment
+    this.currentMessages(session).push(message);
     session.turnManager.recordHumanTurn();
 
     // Determine active workers based on current participants
@@ -257,28 +506,63 @@ export class DeliberationHandler {
 
     const blindReviewMode = message?.blindReview === true;
     let blindCodes: Map<string, string> | undefined;
+    // blindReviewSessionId / blindReviewKeyboardSent are hoisted above the
+    // try block so the finally can roll back when an early await throws
+    // (round-12 P1-A).
     if (blindReviewMode && agentIds.length >= 2) {
       const rolesMap = new Map(Object.entries(currentRoles));
-      const session = this.blindReviewStore.create(threadId, agentIds, rolesMap);
-      if ('error' in session) {
+      const blindReviewResult = this.blindReviewStore.create(threadId, agentIds, rolesMap);
+      if ('error' in blindReviewResult) {
         // The first available bot is fine — we just need to send the error somewhere
         const fallbackId = agentIds[0];
-        await this.sendFn(fallbackId, `❌ ${session.error}. Use /cancelreview to end the previous round.`, threadId);
+        await this.sendFn(fallbackId, `❌ ${blindReviewResult.error}. Use /cancelreview to end the previous round.`, threadId);
         return;
       }
-      blindCodes = session.codeToAgentId;
+      blindCodes = blindReviewResult.codeToAgentId;
+      blindReviewSessionId = blindReviewResult.sessionId;
+      // Round-11 codex finding [P2]: set the per-thread guard NOW, not via
+      // the 'blind-review.started' event listener that only fires after
+      // sendKeyboardFn succeeds. Otherwise a Telegram send failure leaves
+      // the store populated (refusing fresh /blindreview) while the guard
+      // reads null (wrongly allowing /councilreset). The 'started'
+      // listener stays in place because tests + telemetry consumers also
+      // listen on it; setting the field here just removes the inconsistency
+      // window. Re-assigning it later via the listener is idempotent.
+      session.blindReviewSessionId = blindReviewSessionId;
     }
 
-    // Emit deliberation.started
+    // Emit deliberation.started. Topic source: no existing classifier output
+    // carries a topic string, so we fall back to the first 80 chars of the
+    // human message content (spec §4.5, plan Step 5g).
+    //
+    // Round-13 codex finding [P2-X]: topic is SEGMENT-level, not turn-level.
+    // SessionReset frames the reset summary around session.currentTopic; if
+    // every round overwrites it, a multi-round segment whose last follow-up
+    // was a narrow question ("what about tests?") would bias the summary
+    // away from the segment's actual subject. Only initialise on the first
+    // human turn of a new segment (currentTopic === ''); openNewSegment
+    // clears it back to '' for the next segment. The per-round event payload
+    // still uses the latest message hint so listeners can react to the
+    // immediate prompt.
+    const turnTopic = message.content.slice(0, 80);
+    if (session.currentTopic === '') {
+      session.currentTopic = turnTopic;
+    }
     this.bus.emit('deliberation.started', {
       threadId,
       participants: agentIds,
       roles: currentRoles,
       structure: 'free',
+      topic: turnTopic,
     });
 
     // Sequential deliberation: first agent responds to human, second agent responds to both
     const responses: Array<{ worker: AgentWorker; role: AgentRole; response: ProviderResponse }> = [];
+
+    // Hoisted: the snapshot prefix can't change mid-round (reset is user-
+    // triggered between rounds), so resolve it once to avoid an SQLite hit per
+    // agent turn.
+    const snapshotPrefix = this.getSnapshotPrefix(threadId) ?? undefined;
 
     let prevAgentId: string = HUMAN_SENTINEL;
     for (const worker of activeWorkers) {
@@ -294,9 +578,9 @@ export class DeliberationHandler {
 
       // Human-critique pause: open a window before this agent speaks. If the
       // user submits a critique, inject it one-shot into THIS agent's history
-      // + challenge prompt only. We deliberately don't push it onto
-      // session.conversationHistory so a critique targeted at worker.id
-      // doesn't leak into later agents' or later rounds' context.
+      // + challenge prompt only. We deliberately don't push it onto the
+      // current segment so a critique targeted at worker.id doesn't leak into
+      // later agents' or later rounds' context.
       const critiqueOutcome = await this.awaitCritique(threadId, prevAgentId, worker.id);
       let injectedCritiqueText: string | undefined;
       let turnCritiqueMsg: CouncilMessage | undefined;
@@ -322,8 +606,10 @@ export class DeliberationHandler {
       // Emit agent.responding
       this.bus.emit('agent.responding', { threadId, agentId: worker.id, role });
 
+      const msgs = this.currentMessages(session);
+
       // Build challenge prompt from anti-sycophancy
-      const lastAgentMsg = [...session.conversationHistory]
+      const lastAgentMsg = [...msgs]
         .reverse()
         .find((m) => m.role === 'agent' && m.agentId !== worker.id);
 
@@ -355,9 +641,7 @@ export class DeliberationHandler {
         session.pendingPatternInjection = null;
       }
 
-      const turnHistory = turnCritiqueMsg
-        ? [...session.conversationHistory, turnCritiqueMsg]
-        : session.conversationHistory;
+      const turnHistory = turnCritiqueMsg ? [...msgs, turnCritiqueMsg] : msgs;
 
       const response = await worker.respond(
         turnHistory,
@@ -365,6 +649,7 @@ export class DeliberationHandler {
         challengePrompt,
         complexity,
         rotationMode,
+        snapshotPrefix,
       );
 
       // Tag turn into blind-review session if active
@@ -399,8 +684,8 @@ export class DeliberationHandler {
           },
         };
 
-        // Push to history BEFORE next agent — so next agent sees this response
-        session.conversationHistory.push(agentMsg);
+        // Push to current segment BEFORE next agent — so next agent sees this response
+        msgs.push(agentMsg);
         session.turnManager.recordAgentTurn(worker.id);
         session.critiqueLog.agentTurns += 1;
         prevAgentId = worker.id;
@@ -454,16 +739,35 @@ export class DeliberationHandler {
     }
 
     // Blind-review: post scoring keyboard after all responses are in
-    if (blindCodes && blindCodes.size >= 2 && this.sendKeyboardFn) {
+    if (blindCodes && blindCodes.size >= 2 && this.sendKeyboardFn && blindReviewSessionId) {
       const codes = [...blindCodes.keys()];
       const keyboard = buildScoringKeyboard(codes);
-      await this.sendKeyboardFn(
-        agentIds[0],
-        'Score each agent 1-5 based on their contribution above. Identities will be revealed once all are scored.',
-        keyboard,
-        threadId,
-      );
-      this.bus.emit('blind-review.started', { threadId, codes });
+      // Round-11 codex finding [P2]: if Telegram rejects this send (rate
+      // limit, network blip, bot down), the BlindReviewStore session is
+      // already populated and the per-thread guard is already set (round-11
+      // sibling fix above moved that earlier). Without this rollback the
+      // thread is wedged: /blindreview is rejected as "pending session
+      // exists" AND /councilreset is wrongly blocked. Roll both back so
+      // the user can retry cleanly.
+      try {
+        await this.sendKeyboardFn(
+          agentIds[0],
+          'Score each agent 1-5 based on their contribution above. Identities will be revealed once all are scored.',
+          keyboard,
+          threadId,
+        );
+        this.bus.emit('blind-review.started', { threadId, codes, sessionId: blindReviewSessionId });
+        blindReviewKeyboardSent = true;
+      } catch (err) {
+        // The finally block at the bottom of runDeliberation rolls back the
+        // store + guard (round-12 P1-A makes that the single rollback path).
+        // Here we only surface the keyboard-specific user-facing notice.
+        await this.sendFn(
+          'facilitator',
+          `❌ Failed to post scoring keyboard: ${err instanceof Error ? err.message : String(err)}. Blind-review session cleared — please retry.`,
+          threadId,
+        );
+      }
     }
 
     const collaborationScore = scoreSession({
@@ -499,7 +803,19 @@ export class DeliberationHandler {
     };
 
     try {
-      const summaryResponse = await this.facilitatorWorker.respond([summaryMsg], 'synthesizer', undefined, complexity);
+      // Round-13 codex finding [P2-Y]: do NOT pass snapshotPrefix here.
+      // summaryMsg already contains only the current round's transcript;
+      // prepending the prior segment's snapshot would frame the user-facing
+      // 「本輪討論」 reply around stale decisions from the sealed segment.
+      // Peer agents (claude/openai) still get snapshotPrefix on their own
+      // respond() calls above — that's the carry-forward path.
+      const summaryResponse = await this.facilitatorWorker.respond(
+        [summaryMsg],
+        'synthesizer',
+        undefined,
+        complexity,
+        false,
+      );
       if (summaryResponse.content.trim()) {
         await this.sendFn('facilitator', summaryResponse.content, threadId);
       }
@@ -520,6 +836,19 @@ export class DeliberationHandler {
       intent,
       collaborationScore,
     });
+    } finally {
+      session.deliberationInFlight = false;
+      // Round-12 codex finding [P1-A]: single rollback path for blind-review
+      // state. If the round started a blind-review session but never made it
+      // to a successful keyboard post (any await above threw, or the
+      // sendKeyboard catch fired), clear both the store entry and the
+      // per-thread guard so a fresh /blindreview is accepted and
+      // /councilreset is no longer wrongly blocked.
+      if (blindReviewSessionId !== undefined && !blindReviewKeyboardSent) {
+        this.blindReviewStore.delete(threadId);
+        session.blindReviewSessionId = null;
+      }
+    }
   }
 }
 

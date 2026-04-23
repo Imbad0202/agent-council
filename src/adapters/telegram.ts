@@ -1,5 +1,10 @@
 import { BotManager } from '../telegram/bot.js';
-import type { BlindReviewWiring, PvgRotateWiring, CritiqueUiWiring } from '../telegram/bot.js';
+import type {
+  BlindReviewWiring,
+  PvgRotateWiring,
+  CritiqueUiWiring,
+  SessionResetWiring,
+} from '../telegram/bot.js';
 import { InlineKeyboard } from 'grammy';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import type { InputAdapter, OutputAdapter, AdapterMessage, RichMetadata } from './types.js';
@@ -22,6 +27,12 @@ export interface CritiqueUiAdapter {
   setCritiqueUiWiring(wiring: CritiqueUiWiring): void;
 }
 
+// Same pattern for /councilreset wiring — index.ts feature-detects this
+// narrow shape before passing the SessionResetWiring payload.
+export interface SessionResetAdapter {
+  setSessionResetWiring(wiring: SessionResetWiring): void;
+}
+
 export class TelegramAdapter implements InputAdapter, OutputAdapter {
   private botManager: BotManager;
   private config: TelegramAdapterConfig;
@@ -29,6 +40,7 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
   private pvgRotateWiring: PvgRotateWiring | undefined;
   private critiqueWiring: HumanCritiqueWiring | undefined;
   private critiqueUiWiring: CritiqueUiWiring | undefined;
+  private sessionResetWiring: SessionResetWiring | undefined;
 
   constructor(config: TelegramAdapterConfig) {
     this.config = config;
@@ -59,6 +71,10 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
     };
   }
 
+  setSessionResetWiring(wiring: unknown): void {
+    this.sessionResetWiring = wiring as SessionResetWiring;
+  }
+
   async handleCritiqueRequest(req: CritiqueRequest): Promise<void> {
     await dispatchCritiqueRequest(this.critiqueWiring, req);
   }
@@ -75,6 +91,7 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
         blindReview: this.blindReviewWiring,
         pvgRotate: this.pvgRotateWiring,
         critiqueUi: this.critiqueUiWiring,
+        sessionReset: this.sessionResetWiring,
       },
     );
     await listenerBot.api.deleteWebhook({ drop_pending_updates: true });

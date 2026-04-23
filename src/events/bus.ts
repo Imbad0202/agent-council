@@ -15,7 +15,7 @@ import type {
 export interface EventMap {
   'message.received': { message: CouncilMessage; threadId: number };
   'intent.classified': { intent: IntentType; complexity: Complexity; threadId: number; message: CouncilMessage };
-  'deliberation.started': { threadId: number; participants: string[]; roles: Record<string, AgentRole>; structure: DebateStructure };
+  'deliberation.started': { threadId: number; participants: string[]; roles: Record<string, AgentRole>; structure: DebateStructure; topic: string };
   'memory.injected': { threadId: number; agentId: string; memories: string[] };
   'agent.responding': { threadId: number; agentId: string; role: AgentRole };
   'agent.responded': { threadId: number; agentId: string; response: ProviderResponse; role: AgentRole; classification: ResponseClassification };
@@ -32,9 +32,10 @@ export interface EventMap {
   'execution.completed': { threadId: number; tasks: ExecutionTask[]; diffs: string[] };
   'session.ending': { threadId: number; trigger: 'keyword' | 'timeout' | 'max_turns' };
   'session.ended': { threadId: number; topic: string; outcome: string };
-  'blind-review.started': { threadId: number; codes: string[] };
+  'blind-review.started': { threadId: number; codes: string[]; sessionId: string };
   'blind-review.scored': { threadId: number; code: string; score: number; allScored: boolean };
   'blind-review.revealed': { threadId: number };
+  'blind-review.cancelled': { threadId: number };
   'blind-review.persist-failed': { threadId: number; sessionId: string; error: Error };
   'pvg-rotate.persist-failed': { threadId: number; error: Error };
   'pvg-rotate.revealed': { threadId: number; correct: boolean };

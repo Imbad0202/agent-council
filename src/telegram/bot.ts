@@ -1,9 +1,11 @@
 import { Bot, Context, InlineKeyboard } from 'grammy';
-import { createCouncilMessageFromTelegram } from './handlers.js';
+import { createCouncilMessageFromTelegram, resolveTelegramThreadId } from './handlers.js';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
 import type { BlindReviewDB } from '../council/blind-review-db.js';
 import type { EventBus } from '../events/bus.js';
+import type { SessionReset, HandlerForReset } from '../council/session-reset.js';
+import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type { AdversarialMode, AdversarialRole } from '../council/adversarial-provers.js';
 import { formatGuessReveal, ROTATION_CALLBACK_PATTERN } from '../council/pvg-rotate.js';
 import { formatAdversarialDebrief } from '../council/adversarial-provers.js';
@@ -38,6 +40,19 @@ export interface PvgRotateWiring {
 export interface CritiqueUiWiring {
   state: PendingCritiqueState;
   sendFn?: (agentId: string, content: string, threadId?: number) => Promise<void>;
+}
+
+// Round-15 codex finding [P2]: /councilhistory only needs the snapshot DB;
+// /councilreset needs reset + deliberationHandler + facilitator. Deployments
+// that skip the facilitator agent should still register /councilhistory
+// (read-only, no facilitator tokens) and should still see a "not configured"
+// reply for /councilreset instead of having the command fall through to the
+// catch-all text handler (which would start a full deliberation round —
+// token burn + wrong behaviour).
+export interface SessionResetWiring {
+  db: ResetSnapshotDB;
+  reset?: SessionReset;
+  deliberationHandler?: HandlerForReset;
 }
 
 type CommandFlag =
@@ -121,18 +136,69 @@ export function buildBlindReviewHandler(
   );
 }
 
-export function buildCancelReviewHandler(groupChatId: number, store: BlindReviewStore) {
+export function buildCancelReviewHandler(
+  groupChatId: number,
+  store: BlindReviewStore,
+  bus?: EventBus,
+) {
   return async (ctx: Context) => {
     if (ctx.chat?.id !== groupChatId) return;
     if (ctx.from?.is_bot) return;
-    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const threadId = resolveTelegramThreadId(ctx.message);
     const session = store.get(threadId);
     if (!session) {
       await ctx.reply('No blind-review session in progress for this thread.');
       return;
     }
     store.delete(threadId);
+    // Round-8 codex finding [P2]: DeliberationHandler tracks an independent
+    // blindReviewSessionId on SessionState that /councilreset reads. Without
+    // this emit, the field stays non-null for the life of the process and
+    // /councilreset keeps refusing the thread forever after a cancel.
+    bus?.emit('blind-review.cancelled', { threadId });
     await ctx.reply('Blind-review session cancelled.');
+  };
+}
+
+export function buildCouncilResetHandler(groupChatId: number, wiring: SessionResetWiring) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+    // Round-15 codex finding [P2]: if the deployment omitted the facilitator
+    // agent, reset/deliberationHandler are undefined. Reply instead of
+    // falling through to the catch-all text handler (which would start a
+    // deliberation round on the literal "/councilreset" string).
+    if (!wiring.reset || !wiring.deliberationHandler) {
+      await ctx.reply('/councilreset is not configured (no facilitator agent wired).');
+      return;
+    }
+    const threadId = resolveTelegramThreadId(ctx.message);
+    try {
+      const result = await wiring.reset.reset(wiring.deliberationHandler, threadId);
+      await ctx.reply(
+        `Sealed segment ${result.segmentIndex}: ${result.metadata.decisionsCount} decision(s), ${result.metadata.openQuestionsCount} open question(s). Starting next segment.`,
+      );
+    } catch (err) {
+      await ctx.reply((err as Error).message);
+    }
+  };
+}
+
+export function buildCouncilHistoryHandler(groupChatId: number, db: ResetSnapshotDB) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+    const threadId = resolveTelegramThreadId(ctx.message);
+    const snapshots = db.listSnapshotsForThread(threadId);
+    if (snapshots.length === 0) {
+      await ctx.reply('No resets yet in this session.');
+      return;
+    }
+    const lines = snapshots.map(
+      (s) =>
+        `[${s.segmentIndex}] ${s.sealedAt} — ${s.metadata.decisionsCount} decisions, ${s.metadata.openQuestionsCount} open`,
+    );
+    await ctx.reply(lines.join('\n'));
   };
 }
 
@@ -150,7 +216,7 @@ export function buildBlindReviewCallback(
     if (!ctx.match || !Array.isArray(ctx.match)) return;
     const code = ctx.match[1];
     const score = parseInt(ctx.match[2], 10);
-    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const threadId = resolveTelegramThreadId(ctx.message);
 
     const result = store.recordScore(threadId, code, score);
     if ('error' in result) {
@@ -183,7 +249,7 @@ export function buildPvgRotateCallback(
     if (ctx.chat?.id !== groupChatId) return;
     if (!ctx.match || !Array.isArray(ctx.match)) return;
     const guessedRole = ctx.match[1] as AdversarialRole;
-    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const threadId = resolveTelegramThreadId(ctx.message);
 
     const session = store.get(threadId);
     if (!session) {
@@ -273,9 +339,10 @@ export class BotManager {
       blindReview?: BlindReviewWiring;
       pvgRotate?: PvgRotateWiring;
       critiqueUi?: CritiqueUiWiring;
+      sessionReset?: SessionResetWiring;
     } = {},
   ): void {
-    const { blindReview, pvgRotate, critiqueUi } = wiring;
+    const { blindReview, pvgRotate, critiqueUi, sessionReset } = wiring;
     const listenerBot = this.bots.get(this.listenerAgentId);
     if (!listenerBot) {
       throw new Error(`Listener bot not found for agent: ${this.listenerAgentId}`);
@@ -287,27 +354,19 @@ export class BotManager {
     listenerBot.command('pvgcalibrated', buildPvgTestHandler(this.groupChatId, handler, 'calibrated'));
     listenerBot.command('pvgrotate', buildPvgRotateHandler(this.groupChatId, handler));
 
-    const defaultTextHandler = async (ctx: Context) => {
-      if (ctx.chat?.id !== this.groupChatId) return;
-      if (ctx.from?.is_bot) return;
-      if (!ctx.message) return;
-      const councilMsg = createCouncilMessageFromTelegram(ctx.message);
-      handler.handleHumanMessage(councilMsg);
-    };
-
-    if (critiqueUi) {
-      listenerBot.on('message:text', buildCritiqueTextHandler(
-        this.groupChatId,
-        critiqueUi.state,
-        defaultTextHandler,
-      ));
-    } else {
-      listenerBot.on('message:text', defaultTextHandler);
+    // Round-8 codex finding [P1]: grammY runs middleware in registration
+    // order and `on('message:text', ...)` consumes `/command` updates unless
+    // it calls `next()`. Register every command BEFORE the catch-all text
+    // handler so Telegram doesn't feed `/councilreset` / `/blindreview`
+    // into the deliberation as ordinary text.
+    if (sessionReset) {
+      listenerBot.command('councilreset', buildCouncilResetHandler(this.groupChatId, sessionReset));
+      listenerBot.command('councilhistory', buildCouncilHistoryHandler(this.groupChatId, sessionReset.db));
     }
 
     if (blindReview) {
       listenerBot.command('blindreview', buildBlindReviewHandler(this.groupChatId, handler));
-      listenerBot.command('cancelreview', buildCancelReviewHandler(this.groupChatId, blindReview.store));
+      listenerBot.command('cancelreview', buildCancelReviewHandler(this.groupChatId, blindReview.store, blindReview.bus));
       listenerBot.callbackQuery(/^br-score:([^:]+):(\d)$/, buildBlindReviewCallback(
         this.groupChatId,
         blindReview.store,
@@ -342,6 +401,26 @@ export class BotManager {
         CRITIQUE_CALLBACK_PATTERN,
         buildCritiqueCallback(this.groupChatId, critiqueUi.state, followUpSend),
       );
+    }
+
+    // Register the catch-all text handler LAST so all command handlers above
+    // get first crack at matching `/command` updates (round-8 codex finding).
+    const defaultTextHandler = async (ctx: Context) => {
+      if (ctx.chat?.id !== this.groupChatId) return;
+      if (ctx.from?.is_bot) return;
+      if (!ctx.message) return;
+      const councilMsg = createCouncilMessageFromTelegram(ctx.message);
+      handler.handleHumanMessage(councilMsg);
+    };
+
+    if (critiqueUi) {
+      listenerBot.on('message:text', buildCritiqueTextHandler(
+        this.groupChatId,
+        critiqueUi.state,
+        defaultTextHandler,
+      ));
+    } else {
+      listenerBot.on('message:text', defaultTextHandler);
     }
   }
 

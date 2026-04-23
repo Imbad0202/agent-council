@@ -247,3 +247,28 @@ export interface ExecutionTask {
   result?: { diff: string; filesChanged: string[]; commitHash: string };
   error?: string;
 }
+
+export interface HistorySegment {
+  startedAt: string;
+  endedAt: string | null;
+  // External readers see this as readonly so mutation only flows through
+  // DeliberationHandler's public lifecycle methods. The handler casts
+  // internally when it needs to push.
+  messages: readonly CouncilMessage[];
+  snapshotId: string | null;
+}
+
+export interface ResetSnapshotMetadata {
+  openQuestionsCount: number;
+  decisionsCount: number;
+  blindReviewSessionId: string | null;
+}
+
+export interface ResetSnapshot {
+  snapshotId: string;
+  threadId: number;
+  segmentIndex: number;
+  sealedAt: string;
+  summaryMarkdown: string;
+  metadata: ResetSnapshotMetadata;
+}

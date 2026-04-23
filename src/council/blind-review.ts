@@ -31,7 +31,7 @@ export interface BlindReviewSession {
   revealed: boolean;
 }
 
-export type CreateResult = BlindReviewSession | { error: string };
+export type CreateResult = (BlindReviewSession & { sessionId: string }) | { error: string };
 export type RecordScoreResult = { allScored: boolean } | { error: string };
 
 const CODE_PREFIX = 'Agent-';
@@ -85,7 +85,7 @@ export class BlindReviewStore {
       revealed: false,
     };
     this.sessions.set(threadId, session);
-    return session;
+    return { ...session, sessionId: `${threadId}:${session.startedAt}` };
   }
 
   get(threadId: number): BlindReviewSession | undefined {
