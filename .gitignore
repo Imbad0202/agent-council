@@ -5,6 +5,7 @@ data/
 *.log
 .DS_Store
 .gstack/
+.context/
 
 # Mockup assets — third-party illustrations (soco-st.com), licensed for use
 # but redistribution is restricted. See mockups/README.md for how to reproduce.
