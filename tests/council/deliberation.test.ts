@@ -322,6 +322,62 @@ describe('DeliberationHandler — blind-review turn recording', () => {
     expect(turnB!.model).toBe('claude-sonnet-4-6');
   });
 
+  // Round-11 codex finding [P2]: BlindReviewStore.create() populates the
+  // store synchronously, but session.blindReviewSessionId is only set when
+  // the 'blind-review.started' event listener fires — which only happens
+  // *after* sendKeyboardFn awaits successfully. If sendKeyboardFn rejects
+  // (Telegram rate-limit, network blip, bot down), the store still holds
+  // a pending session (so a fresh /blindreview is rejected), but the
+  // per-thread guard reads null (so /councilreset is wrongly allowed).
+  // Fix: set the guard immediately after store.create() succeeds; on
+  // sendKeyboardFn failure roll back both (store.delete + clear the guard).
+  it('clears blindReviewSessionId guard and store entry when sendKeyboardFn rejects', async () => {
+    const bus = new EventBus();
+    const workers = [
+      makeWorkerWithTier('agent-a', 'Agent A', 'high', 'claude-opus-4-7'),
+      makeWorkerWithTier('agent-b', 'Agent B', 'low', 'claude-sonnet-4-6'),
+    ];
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+    // Reject the keyboard send to simulate Telegram failure mid-round.
+    const sendKeyboardFn = vi.fn().mockRejectedValue(new Error('telegram rate limit'));
+    const handler = new DeliberationHandler(bus, workers, minConfig, sendFn, {
+      sendKeyboardFn,
+    });
+
+    const store = handler.getBlindReviewStore();
+    const threadId = 101;
+
+    const message: CouncilMessage = {
+      id: 'msg-blind-fail',
+      role: 'human',
+      content: 'Evaluate again',
+      timestamp: Date.now(),
+      threadId,
+      blindReview: true,
+    };
+
+    const done = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', () => resolve());
+    });
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId,
+      message,
+    });
+
+    await done;
+
+    // After the failed sendKeyboard:
+    //  - the per-thread guard MUST be null (otherwise /councilreset stays
+    //    wrongly blocked while the store also wrongly allows the path)
+    //  - the store entry MUST be cleared (otherwise a retry of /blindreview
+    //    would be rejected as "pending session exists")
+    expect(handler.getBlindReviewSessionId(threadId)).toBeNull();
+    expect(store.get(threadId)).toBeUndefined();
+  });
+
   it('does NOT record turns when blindReview is false', async () => {
     const bus = new EventBus();
     const workers = [

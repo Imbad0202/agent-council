@@ -20,6 +20,12 @@ export interface HandlerForReset {
   getCurrentTopic(threadId: number): string;
   isResetInFlight(threadId: number): boolean;
   isDeliberationInFlight(threadId: number): boolean;
+  // Round-11 codex finding [P1]: a message is "in flight" between
+  // EventBus.emit('message.received') and IntentGate firing intent.classified
+  // (classify() is async; EventBus does not await listeners). Without this
+  // signal the reset guard sees zero deliberation in flight and seals before
+  // the queued message reaches runDeliberation.
+  hasPendingClassifications(threadId: number): boolean;
   setResetInFlight(threadId: number, v: boolean): void;
   sealCurrentSegment(threadId: number, snapshotId: string): void;
   openNewSegment(threadId: number): void;
@@ -73,6 +79,15 @@ export class SessionReset {
     // refuses here; the matching "deliberation refuses while resetInFlight"
     // direction lives in DeliberationHandler.runDeliberation.
     if (handler.isDeliberationInFlight(threadId)) {
+      throw new DeliberationInProgressError(threadId);
+    }
+
+    // Round-11 codex finding [P1]: pending-classification window is
+    // semantically the same "deliberation is about to seal more turns"
+    // condition as the in-flight guard above, so reuse the same error type.
+    // The user remediation is identical (wait, retry) — branching adapters
+    // on a separate error type would just duplicate code.
+    if (handler.hasPendingClassifications(threadId)) {
       throw new DeliberationInProgressError(threadId);
     }
 

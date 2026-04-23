@@ -139,6 +139,61 @@ describe('DeliberationHandler per-thread segments', () => {
     expect(handler.getSnapshotPrefix(T)).toBe(priorSummary);
   });
 
+  // Round-11 codex finding [P1]: IntentGate.classify is async but EventBus
+  // does not await it, so message.received returns to the caller before
+  // intent.classified fires. SessionState.deliberationInFlight is only set
+  // when runDeliberation actually starts (on intent.classified), so a
+  // /councilreset landing in that gap saw zero in-flight markers and
+  // sealed the segment before the queued message reached it.
+  // Fix: track classifications-in-flight on SessionState. message.received
+  // increments, intent.classified decrements (keyed by message.id so multiple
+  // races don't underflow). hasPendingClassifications() is checked by the
+  // reset guard.
+  it('hasPendingClassifications flips true on message.received, false on intent.classified', () => {
+    const { handler, bus } = buildTestHandler();
+    const m: CouncilMessage = msg('m1', 'hello');
+
+    expect(handler.hasPendingClassifications(T)).toBe(false);
+
+    bus.emit('message.received', { message: m, threadId: T });
+    expect(handler.hasPendingClassifications(T)).toBe(true);
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'low',
+      threadId: T,
+      message: m,
+    });
+    expect(handler.hasPendingClassifications(T)).toBe(false);
+  });
+
+  it('hasPendingClassifications stays positive when only one of two queued messages classifies', () => {
+    const { handler, bus } = buildTestHandler();
+    const m1: CouncilMessage = msg('m1', 'first');
+    const m2: CouncilMessage = msg('m2', 'second');
+
+    bus.emit('message.received', { message: m1, threadId: T });
+    bus.emit('message.received', { message: m2, threadId: T });
+    expect(handler.hasPendingClassifications(T)).toBe(true);
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'low',
+      threadId: T,
+      message: m1,
+    });
+    // m2 still pending — guard must still report true.
+    expect(handler.hasPendingClassifications(T)).toBe(true);
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'low',
+      threadId: T,
+      message: m2,
+    });
+    expect(handler.hasPendingClassifications(T)).toBe(false);
+  });
+
   it('blind-review.cancelled event clears blindReviewSessionId so /councilreset is no longer blocked', () => {
     const { handler, bus } = buildTestHandler();
     // Materialize the session first — started/cancelled listeners skip when

@@ -33,6 +33,7 @@ function makeHandler(init: {
   topic?: string;
   resetInFlight?: boolean;
   deliberationInFlight?: boolean;
+  pendingClassifications?: number;
 } = {}) {
   // Default to a single human turn so existing tests don't trip on the
   // round-10 empty-segment guard. Tests that want to exercise the empty
@@ -61,6 +62,7 @@ function makeHandler(init: {
     getCurrentTopic: vi.fn(() => init.topic ?? 'rust vs go'),
     isResetInFlight: vi.fn(() => resetInFlight),
     isDeliberationInFlight: vi.fn(() => deliberationInFlight),
+    hasPendingClassifications: vi.fn(() => (init.pendingClassifications ?? 0) > 0),
     setResetInFlight: vi.fn((_: number, v: boolean) => {
       resetInFlight = v;
     }),
@@ -231,6 +233,32 @@ describe('SessionReset', () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler({ deliberationInFlight: true });
+    const reset = new SessionReset(db, facilitator as never);
+
+    await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(
+      DeliberationInProgressError,
+    );
+    expect(facilitator.respondDeterministic).not.toHaveBeenCalled();
+    expect(handler.sealCurrentSegment).not.toHaveBeenCalled();
+    expect(handler.openNewSegment).not.toHaveBeenCalled();
+    expect(db.listSnapshotsForThread(T)).toHaveLength(0);
+  });
+
+  it('throws DeliberationInProgressError if classifications are pending; no facilitator call, no DB write, no mutation', async () => {
+    // Round-11 codex finding [P1]: between EventBus.emit('message.received')
+    // and IntentGate's async classify() resolving with intent.classified, the
+    // message is "in flight" but isDeliberationInFlight() still returns false.
+    // A /councilreset landing in that window would seal the segment before the
+    // queued message gets pushed in by runDeliberation, so the message ends up
+    // in the new (post-reset) segment instead of the sealed one — breaking
+    // the snapshot-covers-everything-sent-before guarantee.
+    //
+    // Same DeliberationInProgressError type as the in-flight guard: the user
+    // remediation is identical ("wait, then retry"), and a separate error
+    // would force adapters to branch for no behavioural reason.
+    const db = new ResetSnapshotDB(':memory:');
+    const facilitator = makeFacilitator(VALID_SUMMARY);
+    const handler = makeHandler({ pendingClassifications: 1 });
     const reset = new SessionReset(db, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(

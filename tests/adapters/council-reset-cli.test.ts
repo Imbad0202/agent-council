@@ -14,6 +14,7 @@ function makeDelibHandler(overrides: Partial<{
   blindReviewSessionId: string | null;
   resetInFlight: boolean;
   deliberationInFlight: boolean;
+  pendingClassifications: boolean;
 }> = {}) {
   return {
     getBlindReviewSessionId: vi.fn(() => overrides.blindReviewSessionId ?? null),
@@ -25,6 +26,7 @@ function makeDelibHandler(overrides: Partial<{
     getSegments: vi.fn(() => [{ snapshotId: null }]),
     isResetInFlight: vi.fn(() => overrides.resetInFlight ?? false),
     isDeliberationInFlight: vi.fn(() => overrides.deliberationInFlight ?? false),
+    hasPendingClassifications: vi.fn(() => overrides.pendingClassifications ?? false),
     setResetInFlight: vi.fn(),
     sealCurrentSegment: vi.fn(),
     openNewSegment: vi.fn(),

@@ -62,6 +62,7 @@ function makeDelibHandler() {
     getSegments: vi.fn(() => [{ snapshotId: null }]),
     isResetInFlight: vi.fn(() => false),
     isDeliberationInFlight: vi.fn(() => false),
+    hasPendingClassifications: vi.fn(() => false),
     setResetInFlight: vi.fn(),
     sealCurrentSegment: vi.fn(),
     openNewSegment: vi.fn(),

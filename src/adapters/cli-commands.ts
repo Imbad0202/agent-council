@@ -6,6 +6,26 @@ import type { HandlerForReset } from '../council/session-reset.js';
 
 type PrintFn = (line: string) => void;
 
+// Round-11 codex finding [P2]: cli-dispatch.ts used to treat any line
+// starting with '/' as a CLI command. In a coding-focused council that
+// regresses every absolute path or shell snippet (e.g. `/Users/...`,
+// `/bin/bash -lc ...`) into "Unknown command". Single source of truth for
+// the whitelist lives here next to the actual handlers — keep them in
+// sync. Sync commands handled by handle(): help, sessions, delete,
+// memories, memory, forget, patterns. Async commands handled by
+// handleAsync(): councilreset, councilhistory.
+export const CLI_COMMAND_NAMES: ReadonlySet<string> = new Set([
+  'help',
+  'sessions',
+  'delete',
+  'memories',
+  'memory',
+  'forget',
+  'patterns',
+  'councilreset',
+  'councilhistory',
+]);
+
 export interface ResetWiring {
   sessionReset?: SessionReset;
   deliberationHandler?: HandlerForReset;

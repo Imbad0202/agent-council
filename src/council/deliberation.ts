@@ -63,6 +63,16 @@ interface SessionState {
   // checks this before sealing so a reset can't snapshot one transcript and
   // seal a later one — see round-7 audit finding.
   deliberationInFlight: boolean;
+  // Round-11 codex finding [P1]: a message that has been emitted via
+  // EventBus 'message.received' is "in flight" until IntentGate's async
+  // classify() resolves and emits 'intent.classified'. EventBus does not
+  // await listeners, so this window is invisible to deliberationInFlight
+  // (which only flips inside runDeliberation, triggered by intent.classified).
+  // We track CouncilMessage.id values here: add on message.received, remove
+  // on intent.classified. The reset guard rejects when this set is non-empty.
+  // Keying by message.id (not a counter) keeps add/remove 1:1 even if
+  // bus events fire out of order or duplicate.
+  pendingClassifications: Set<string>;
 }
 
 export class DeliberationHandler {
@@ -184,6 +194,18 @@ export class DeliberationHandler {
       if (!session) return;
       session.blindReviewSessionId = null;
     });
+
+    // Round-11 codex finding [P1]: track classifications-in-flight so the
+    // reset guard sees messages that have been emitted but not yet
+    // classified. Materialize the session via getSession (not sessions.get)
+    // because message.received is the first event a brand-new thread will
+    // see — sessions.get would no-op and the marker would be lost.
+    this.bus.on('message.received', ({ message, threadId }) => {
+      this.getSession(threadId).pendingClassifications.add(message.id);
+    });
+    this.bus.on('intent.classified', ({ message, threadId }) => {
+      this.getSession(threadId).pendingClassifications.delete(message.id);
+    });
   }
 
   private getSession(threadId: number): SessionState {
@@ -201,6 +223,7 @@ export class DeliberationHandler {
         currentTopic: '',
         resetInFlight: false,
         deliberationInFlight: false,
+        pendingClassifications: new Set(),
       });
     }
     return this.sessions.get(threadId)!;
@@ -307,6 +330,10 @@ export class DeliberationHandler {
 
   public isDeliberationInFlight(threadId: number): boolean {
     return this.getSession(threadId).deliberationInFlight;
+  }
+
+  public hasPendingClassifications(threadId: number): boolean {
+    return this.getSession(threadId).pendingClassifications.size > 0;
   }
 
   // Test-only: lets deliberation-segments.test.ts exercise segment lifecycle
@@ -450,6 +477,15 @@ export class DeliberationHandler {
       }
       blindCodes = blindReviewResult.codeToAgentId;
       blindReviewSessionId = blindReviewResult.sessionId;
+      // Round-11 codex finding [P2]: set the per-thread guard NOW, not via
+      // the 'blind-review.started' event listener that only fires after
+      // sendKeyboardFn succeeds. Otherwise a Telegram send failure leaves
+      // the store populated (refusing fresh /blindreview) while the guard
+      // reads null (wrongly allowing /councilreset). The 'started'
+      // listener stays in place because tests + telemetry consumers also
+      // listen on it; setting the field here just removes the inconsistency
+      // window. Re-assigning it later via the listener is idempotent.
+      session.blindReviewSessionId = blindReviewSessionId;
     }
 
     // Emit deliberation.started. Topic source: no existing classifier output
@@ -651,13 +687,30 @@ export class DeliberationHandler {
     if (blindCodes && blindCodes.size >= 2 && this.sendKeyboardFn && blindReviewSessionId) {
       const codes = [...blindCodes.keys()];
       const keyboard = buildScoringKeyboard(codes);
-      await this.sendKeyboardFn(
-        agentIds[0],
-        'Score each agent 1-5 based on their contribution above. Identities will be revealed once all are scored.',
-        keyboard,
-        threadId,
-      );
-      this.bus.emit('blind-review.started', { threadId, codes, sessionId: blindReviewSessionId });
+      // Round-11 codex finding [P2]: if Telegram rejects this send (rate
+      // limit, network blip, bot down), the BlindReviewStore session is
+      // already populated and the per-thread guard is already set (round-11
+      // sibling fix above moved that earlier). Without this rollback the
+      // thread is wedged: /blindreview is rejected as "pending session
+      // exists" AND /councilreset is wrongly blocked. Roll both back so
+      // the user can retry cleanly.
+      try {
+        await this.sendKeyboardFn(
+          agentIds[0],
+          'Score each agent 1-5 based on their contribution above. Identities will be revealed once all are scored.',
+          keyboard,
+          threadId,
+        );
+        this.bus.emit('blind-review.started', { threadId, codes, sessionId: blindReviewSessionId });
+      } catch (err) {
+        this.blindReviewStore.delete(threadId);
+        session.blindReviewSessionId = null;
+        await this.sendFn(
+          'facilitator',
+          `❌ Failed to post scoring keyboard: ${err instanceof Error ? err.message : String(err)}. Blind-review session cleared — please retry.`,
+          threadId,
+        );
+      }
     }
 
     const collaborationScore = scoreSession({
