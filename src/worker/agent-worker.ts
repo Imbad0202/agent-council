@@ -58,6 +58,7 @@ export class AgentWorker {
     challengePrompt?: string,
     complexity?: Complexity,
     rotationMode = false,
+    snapshotPrefix?: string,
   ): Promise<ProviderResponse> {
     const { stable, volatile } = buildSystemPromptParts(this.config, this.memorySyncPath, role, rotationMode);
     const systemPrompt = `${stable}\n\n---\n\n${volatile}`;
@@ -65,7 +66,21 @@ export class AgentWorker {
       ? [{ text: `${stable}\n\n---\n\n`, cache: true }, { text: volatile }]
       : undefined;
 
-    const messages: ProviderMessage[] = conversationHistory.map((msg) => {
+    const effectiveHistory: CouncilMessage[] = snapshotPrefix
+      ? [
+          {
+            id: `snapshot-prefix-${Date.now()}`,
+            role: 'human',
+            content:
+              `Prior segment summary (from /councilreset):\n\n${snapshotPrefix}\n\n---\n\n` +
+              `The conversation below is the new segment. Treat the summary above as shared context.`,
+            timestamp: Date.now(),
+          },
+          ...conversationHistory,
+        ]
+      : conversationHistory;
+
+    const messages: ProviderMessage[] = effectiveHistory.map((msg) => {
       if (msg.role === 'human') {
         return { role: 'user' as const, content: msg.content };
       }
@@ -113,6 +128,47 @@ export class AgentWorker {
       tierUsed: complexity ?? 'unknown',
       modelUsed: model,
     };
+  }
+
+  /**
+   * Deterministic-mode response for reset-summary generation. Pins
+   * temperature to 0 to stabilise output bytes and disables thinking
+   * (Anthropic requires temperature=1 when thinking is enabled).
+   *
+   * Note on cross-provider determinism: temperature=0 is honoured by
+   * Claude and OpenAI. Gemini clamps to near-zero but may still have
+   * residual variance. The caller (SessionReset) does NOT rely on
+   * byte-identical output — the summary is read as plain message
+   * content, not hashed or cached.
+   */
+  async respondDeterministic(
+    conversationHistory: CouncilMessage[],
+    role: AgentRole,
+  ): Promise<ProviderResponse> {
+    const { stable, volatile } = buildSystemPromptParts(this.config, this.memorySyncPath, role, false);
+    const systemPrompt = `${stable}\n\n---\n\n${volatile}`;
+
+    const messages: ProviderMessage[] = conversationHistory.map((msg) => {
+      if (msg.role === 'human') {
+        return { role: 'user' as const, content: msg.content };
+      }
+      if (msg.role === 'human-critique') {
+        const label = `[Human critique${msg.critiqueStance ? ` · ${msg.critiqueStance}` : ''}]`;
+        return { role: 'user' as const, content: `${label}: ${msg.content}` };
+      }
+      if (msg.agentId === this.id) {
+        return { role: 'assistant' as const, content: msg.content };
+      }
+      return { role: 'user' as const, content: `[${msg.agentId}]: ${msg.content}` };
+    });
+
+    const model = this.resolveModel();
+
+    return this.provider.chat(messages, {
+      model,
+      temperature: 0,
+      systemPrompt,
+    });
   }
 
   getStats(): AgentStats {
