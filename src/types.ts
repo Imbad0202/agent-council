@@ -247,3 +247,25 @@ export interface ExecutionTask {
   result?: { diff: string; filesChanged: string[]; commitHash: string };
   error?: string;
 }
+
+export interface HistorySegment {
+  startedAt: string;
+  endedAt: string | null;
+  messages: CouncilMessage[];
+  snapshotId: string | null;
+}
+
+export interface ResetSnapshotMetadata {
+  openQuestionsCount: number;
+  decisionsCount: number;
+  blindReviewSessionId: string | null;
+}
+
+export interface ResetSnapshot {
+  snapshotId: string;
+  threadId: number;
+  segmentIndex: number;
+  sealedAt: string;
+  summaryMarkdown: string;
+  metadata: ResetSnapshotMetadata;
+}
