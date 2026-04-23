@@ -414,6 +414,14 @@ export class DeliberationHandler {
     // /councilreset calls.
     session.deliberationInFlight = true;
 
+    // Hoisted for finally-block rollback (round-12 P1-A). blindReviewSessionId
+    // is set when BlindReviewStore.create() succeeds; blindReviewKeyboardSent
+    // flips true only after the scoring keyboard posts AND blind-review.started
+    // is emitted. The finally treats undefined sessionId as "no rollback
+    // needed" and any non-undefined + !sent combination as "rollback".
+    let blindReviewSessionId: string | undefined;
+    let blindReviewKeyboardSent = false;
+
     try {
     // Reset per-round critique stats. Segment messages are retained across
     // rounds for context continuity, but collaboration-depth metrics are
@@ -465,7 +473,9 @@ export class DeliberationHandler {
 
     const blindReviewMode = message?.blindReview === true;
     let blindCodes: Map<string, string> | undefined;
-    let blindReviewSessionId: string | undefined;
+    // blindReviewSessionId / blindReviewKeyboardSent are hoisted above the
+    // try block so the finally can roll back when an early await throws
+    // (round-12 P1-A).
     if (blindReviewMode && agentIds.length >= 2) {
       const rolesMap = new Map(Object.entries(currentRoles));
       const blindReviewResult = this.blindReviewStore.create(threadId, agentIds, rolesMap);
@@ -702,9 +712,11 @@ export class DeliberationHandler {
           threadId,
         );
         this.bus.emit('blind-review.started', { threadId, codes, sessionId: blindReviewSessionId });
+        blindReviewKeyboardSent = true;
       } catch (err) {
-        this.blindReviewStore.delete(threadId);
-        session.blindReviewSessionId = null;
+        // The finally block at the bottom of runDeliberation rolls back the
+        // store + guard (round-12 P1-A makes that the single rollback path).
+        // Here we only surface the keyboard-specific user-facing notice.
         await this.sendFn(
           'facilitator',
           `❌ Failed to post scoring keyboard: ${err instanceof Error ? err.message : String(err)}. Blind-review session cleared — please retry.`,
@@ -776,6 +788,16 @@ export class DeliberationHandler {
     });
     } finally {
       session.deliberationInFlight = false;
+      // Round-12 codex finding [P1-A]: single rollback path for blind-review
+      // state. If the round started a blind-review session but never made it
+      // to a successful keyboard post (any await above threw, or the
+      // sendKeyboard catch fired), clear both the store entry and the
+      // per-thread guard so a fresh /blindreview is accepted and
+      // /councilreset is no longer wrongly blocked.
+      if (blindReviewSessionId !== undefined && !blindReviewKeyboardSent) {
+        this.blindReviewStore.delete(threadId);
+        session.blindReviewSessionId = null;
+      }
     }
   }
 }

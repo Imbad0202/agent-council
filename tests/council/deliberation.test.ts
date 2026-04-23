@@ -378,6 +378,77 @@ describe('DeliberationHandler — blind-review turn recording', () => {
     expect(store.get(threadId)).toBeUndefined();
   });
 
+  // Round-12 codex finding [P1-A]: round-11's blind-review fix only caught
+  // sendKeyboardFn failures. Any earlier await in the round (agent respond,
+  // sendFn, debrief broadcast, ...) throwing would exit runDeliberation
+  // with the store entry and per-thread guard still populated, wedging
+  // both /blindreview ("pending session exists") and /councilreset
+  // ("blind-review pending"). Fix: rollback in finally if the keyboard was
+  // never successfully posted, regardless of which await blew up.
+  it('rolls back blind-review state when an agent respond() throws before keyboard send', async () => {
+    const bus = new EventBus();
+    const workers = [
+      makeWorkerWithTier('agent-a', 'Agent A', 'high', 'claude-opus-4-7'),
+      makeWorkerWithTier('agent-b', 'Agent B', 'low', 'claude-sonnet-4-6'),
+    ];
+    // agent-a's respond throws — this happens BEFORE the sendKeyboardFn
+    // catch block, so the round-11 fix doesn't cover it.
+    (workers[0].respond as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('provider 503'),
+    );
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+    const sendKeyboardFn = vi.fn().mockResolvedValue(undefined);
+    const handler = new DeliberationHandler(bus, workers, minConfig, sendFn, {
+      sendKeyboardFn,
+    });
+
+    const store = handler.getBlindReviewStore();
+    const threadId = 102;
+
+    const message: CouncilMessage = {
+      id: 'msg-blind-throw',
+      role: 'human',
+      content: 'Evaluate this',
+      timestamp: Date.now(),
+      threadId,
+      blindReview: true,
+    };
+
+    // intent.classified → runDeliberation is fire-and-forget (the listener
+    // doesn't await), so an agent throw becomes an unhandled rejection.
+    // Swallow it just for this test — the production behaviour is the same;
+    // observability of pre-existing unhandled rejections is out of scope for
+    // round-12 P1-A.
+    const swallowReject = (err: Error): void => {
+      if (err.message !== 'provider 503') throw err;
+    };
+    process.on('unhandledRejection', swallowReject as never);
+
+    const finished = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', () => resolve());
+      // Fallback: runDeliberation aborts before deliberation.ended on this
+      // path, so a short timeout lets the finally block settle.
+      setTimeout(resolve, 200);
+    });
+
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId,
+      message,
+    });
+
+    await finished;
+    process.off('unhandledRejection', swallowReject as never);
+
+    // Both must be cleared so the user can retry /blindreview AND
+    // /councilreset is no longer wrongly blocked.
+    expect(handler.getBlindReviewSessionId(threadId)).toBeNull();
+    expect(store.get(threadId)).toBeUndefined();
+    // sendKeyboardFn was never reached — the round aborted earlier.
+    expect(sendKeyboardFn).not.toHaveBeenCalled();
+  });
+
   it('does NOT record turns when blindReview is false', async () => {
     const bus = new EventBus();
     const workers = [

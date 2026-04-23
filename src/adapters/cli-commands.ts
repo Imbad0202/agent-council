@@ -14,6 +14,13 @@ type PrintFn = (line: string) => void;
 // sync. Sync commands handled by handle(): help, sessions, delete,
 // memories, memory, forget, patterns. Async commands handled by
 // handleAsync(): councilreset, councilhistory.
+//
+// Round-12 codex finding [P2]: /quit /debug /resume are advertised in the
+// /help banner (CLI startup line + listSessions output) but are NOT
+// implemented in handle() yet. They still must stay on the CLI path so
+// they don't trigger a deliberation round when typed. They currently fall
+// through to handle()'s 'Unknown command' branch — restoring pre-round-11
+// behaviour. Implementing them is a separate gap (TODO outside round-12).
 export const CLI_COMMAND_NAMES: ReadonlySet<string> = new Set([
   'help',
   'sessions',
@@ -24,6 +31,9 @@ export const CLI_COMMAND_NAMES: ReadonlySet<string> = new Set([
   'patterns',
   'councilreset',
   'councilhistory',
+  'quit',
+  'debug',
+  'resume',
 ]);
 
 export interface ResetWiring {

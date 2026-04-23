@@ -32,6 +32,8 @@ All notable changes to this project will be documented in this file.
 - `ProviderResponse.tokensUsed.cacheCreationInput` / `.cacheReadInput` instrumentation — needed to *verify* cache-hit; v0.5.1 ships the feature without that metric.
 - Durable `HistorySegment.messages` across process restart — snapshots survive, in-memory segments do not.
 - `/councilcontract` sprint contract command.
+- **Late `facilitator.intervened` race across reset boundary** — round-12 codex finding (P1-B). Fire-and-forget bus listeners that mutate session state are not covered by the `pendingClassifications` / `deliberationInFlight` / `resetInFlight` guard set, so an intervention emitted shortly after `deliberation.ended` may land in the wrong segment. v0.5.1 ships with this race documented as a known limitation in `docs/LONG_RUNNING_COUNCIL.md`; v0.5.2 will address it systemically (likely either uniform mutation accounting on `EventBus`, or moving listener mutations into a synchronous `runDeliberation` collector). Workaround: re-run `/councilreset` if a follow-up agent message references content that should have been in the prior summary.
+- **Adapter-level CLI commands `/quit` `/debug` `/resume` are advertised but not implemented** — round-12 codex finding (P2 sub-issue). They are now in `CLI_COMMAND_NAMES` so they don't trigger a deliberation round, but they hit `handle()`'s "Unknown command" fallback. Implementing the actual handlers (graceful shutdown, verbose toggle, session resume) is a separate v0.5.2 task.
 
 ## [0.5.0] - 2026-04-23
 

@@ -68,6 +68,22 @@ The reset sequence is designed to leave no half-committed state.
 
 If the rollback cleanup itself throws (e.g. the database handle has been closed), the original lifecycle error still surfaces to the caller — the cleanup failure is attached as `Error.cause` so neither root cause is lost.
 
+## Known limitations (deferred to v0.5.2)
+
+### Late `facilitator.intervened` may cross the reset boundary
+
+`facilitator.intervened` events are emitted asynchronously by FacilitatorAgent and consumed via `EventBus.on('facilitator.intervened', ...)`. The listener appends the intervention into the current segment's messages. Because `EventBus.emit` does not await its listeners, a facilitator evaluation that fires shortly after `deliberation.ended` can land in the new (post-reset) segment instead of the segment it was actually responding to — or, in the narrow window between `sealCurrentSegment` and `openNewSegment`, mutate the just-sealed segment after its snapshot has already been written.
+
+**Why we did not fix this in v0.5.1.** Caught by round-12 `codex review`. The narrow fix is "add `pendingFacilitatorEvaluations` accounting and check it from the reset guard," matching the round-11 `pendingClassifications` pattern. But the underlying mismatch is between **fire-and-forget bus listeners that mutate session state** and **a transactional reset boundary**: every new listener is one more counter the guard has to remember to consult. Five rounds of `codex review` between v0.5.0 and v0.5.1 each caught a different listener slipping through the same crack. v0.5.2 will address this systemically — see the v0.5.2 spec for the chosen approach (likely either a uniform mutation-accounting layer on EventBus, or moving listener mutations into a synchronous `runDeliberation` collector).
+
+**Workaround.** If a follow-up agent message after `/councilreset` references content that should have been in the prior summary, run `/councilreset` again. The empty-segment guard (round-10) prevents wasted facilitator tokens if there's nothing new to summarize.
+
+**Detection.** No automatic detection. Production telemetry should grep `currentMessages` writes for events emitted after `deliberation.ended` if the issue surfaces in practice.
+
+### Pre-keyboard blind-review failures (resolved in v0.5.1)
+
+For completeness: round-12 also caught a related issue where `BlindReviewStore.create()` ran but `sendKeyboardFn` never reached because an earlier await threw. That one is fixed inline — the `runDeliberation` finally block now rolls back the store entry and the per-thread guard whenever a blind-review session was started but the keyboard was not successfully posted (`blindReviewKeyboardSent` sentinel).
+
 ## Design rationale
 
 See `docs/superpowers/specs/2026-04-23-v0.5.1-session-reset-design.md` for the full design, including the post-Codex scope reduction that trimmed v0.5.1 down to the provider-agnostic prepend and deferred the cache-token instrumentation to v0.5.2.

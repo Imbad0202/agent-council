@@ -98,6 +98,25 @@ describe('routeCliInput', () => {
     expect(router.handleHumanMessage).not.toHaveBeenCalled();
   });
 
+  // Round-12 codex finding [P2]: /quit /debug /resume are advertised in the
+  // CLI banner and /help output but were not in CLI_COMMAND_NAMES, so
+  // round-11's whitelist regression turned them into deliberation prompts.
+  // They must stay on the CLI path. (Their actual handler implementations
+  // are a separate gap — out of round-12 scope; for now they hit handle()'s
+  // 'Unknown command' fallback, restoring pre-round-11 behaviour.)
+  it.each(['quit', 'debug', 'resume'])(
+    'routes advertised /%s to handleAsync, not deliberation',
+    async (cmd) => {
+      const cliCmd = { handleAsync: vi.fn().mockResolvedValue(undefined) };
+      const router = { handleHumanMessage: vi.fn() };
+
+      await routeCliInput(`/${cmd}`, router as never, cliCmd as never, 0);
+
+      expect(cliCmd.handleAsync).toHaveBeenCalledWith(cmd, '');
+      expect(router.handleHumanMessage).not.toHaveBeenCalled();
+    },
+  );
+
   it('empty line is a no-op (consistent with existing CLI adapter behaviour)', async () => {
     const cliCmd = { handleAsync: vi.fn() };
     const router = { handleHumanMessage: vi.fn() };
