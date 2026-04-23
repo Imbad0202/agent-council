@@ -66,6 +66,46 @@ export interface ParsedSummaryMetadata {
   openQuestionsCount: number;
 }
 
+// Round-16 codex finding [P2-VALIDATION]: parseSummaryMetadata is
+// structural-only — it counts bullets under whichever sections it finds and
+// returns 0 for missing sections. That's fine for counting, but it is NOT a
+// validity check: a facilitator response with `### Decisions` (wrong
+// heading level) or only some sections would still parse as 0/0 and get
+// committed. SessionReset calls this validator BEFORE persist so a malformed
+// summary throws MalformedResetSummaryError instead of poisoning the
+// snapshot DB.
+//
+// Required sections come from the same buildResetSummaryPrompt prompt —
+// keep this list in sync with the prompt's "EXACTLY these four H2
+// sections" promise.
+export const REQUIRED_RESET_SUMMARY_SECTIONS = [
+  'Decisions',
+  'Open Questions',
+  'Evidence Pointers',
+  'Blind-Review State',
+] as const;
+
+export interface ResetSummaryValidationResult {
+  valid: boolean;
+  missingSections: string[];
+}
+
+export function validateResetSummaryMarkdown(
+  markdown: string,
+): ResetSummaryValidationResult {
+  const headings = new Set<string>();
+  for (const raw of markdown.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('## ') && !line.startsWith('### ')) {
+      headings.add(line.slice(3).toLowerCase());
+    }
+  }
+  const missing = REQUIRED_RESET_SUMMARY_SECTIONS.filter(
+    (section) => !headings.has(section.toLowerCase()),
+  );
+  return { valid: missing.length === 0, missingSections: missing };
+}
+
 export function parseSummaryMetadata(markdown: string): ParsedSummaryMetadata {
   const lines = markdown.split('\n');
   let section: 'decisions' | 'open' | 'other' = 'other';

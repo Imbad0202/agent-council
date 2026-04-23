@@ -34,3 +34,24 @@ export class EmptySegmentError extends Error {
     this.name = 'EmptySegmentError';
   }
 }
+
+// Round-16 codex finding [P2-VALIDATION]: SessionReset used to commit
+// whatever markdown the facilitator returned. parseSummaryMetadata is
+// purely structural — if the LLM emitted "### Decisions" instead of
+// "## Decisions" or skipped a section, it silently returned 0/0 and the
+// malformed snapshot was still persisted. Snowball: every future
+// /councilreset on the thread carried the bad summary forward via
+// buildPriorSummariesBlock, so a single LLM format drift poisoned all
+// subsequent resets. Throw before persist so the existing nested
+// rollback semantics keep the thread in a retry-safe state.
+export class MalformedResetSummaryError extends Error {
+  public readonly missingSections: string[];
+  constructor(missingSections: string[]) {
+    super(
+      `Facilitator returned a malformed reset summary — missing required H2 section(s): ${missingSections.join(', ')}. ` +
+        'Retry /councilreset; if it persists, check the facilitator model / prompt for schema drift.',
+    );
+    this.name = 'MalformedResetSummaryError';
+    this.missingSections = missingSections;
+  }
+}

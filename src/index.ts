@@ -332,15 +332,23 @@ async function main() {
           // snapshot schemas and has a different storage boundary.
           memoryDb ?? new MemoryDB(resolve('data/brain.db')),
           (line) => console.log(line),
-          sessionReset
-            ? {
-                sessionReset,
-                deliberationHandler,
-                resetSnapshotDB,
-                // Per-process CLI threadId (round-14 P2-W fix).
-                threadId: cliThreadId,
-              }
-            : {},
+          // Round-16 codex finding [P2-CLI]: round-15 fixed Telegram so
+          // /councilhistory works in facilitator-less deployments
+          // (DB-only dependency), but the CLI ternary kept passing `{}`
+          // when sessionReset was undefined — symmetric bug. Now always
+          // pass resetSnapshotDB + threadId; sessionReset/
+          // deliberationHandler are added only when facilitator wiring
+          // exists. CliCommandHandler.councilReset already replies
+          // "not configured" when those are missing, and councilHistory
+          // works fully on DB + threadId alone.
+          {
+            resetSnapshotDB,
+            // Per-process CLI threadId (round-14 P2-W fix).
+            threadId: cliThreadId,
+            ...(sessionReset
+              ? { sessionReset, deliberationHandler }
+              : {}),
+          },
         )
       : undefined;
 

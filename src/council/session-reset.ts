@@ -5,11 +5,13 @@ import {
   buildPriorSummariesBlock,
   buildResetSummaryPrompt,
   parseSummaryMetadata,
+  validateResetSummaryMarkdown,
 } from './session-reset-prompts.js';
 import {
   BlindReviewActiveError,
   DeliberationInProgressError,
   EmptySegmentError,
+  MalformedResetSummaryError,
   ResetInProgressError,
 } from './session-reset-errors.js';
 
@@ -141,6 +143,22 @@ export class SessionReset {
       );
 
       const summaryMarkdown = response.content;
+
+      // Round-16 codex finding [P2-VALIDATION]: validate the structural
+      // contract BEFORE persist. parseSummaryMetadata silently returns 0/0
+      // for malformed input, which would commit a bad snapshot row that
+      // /councilhistory then surfaces as wrong AND every future
+      // /councilreset on the thread carries forward via
+      // buildPriorSummariesBlock. Throwing here triggers the existing
+      // rollback semantics (no DB write happens after this point if we
+      // throw) and leaves the thread retry-safe — the user can re-run
+      // /councilreset and the facilitator's next response gets validated
+      // again.
+      const validation = validateResetSummaryMarkdown(summaryMarkdown);
+      if (!validation.valid) {
+        throw new MalformedResetSummaryError(validation.missingSections);
+      }
+
       const parsed = parseSummaryMetadata(summaryMarkdown);
       const snapshotId = randomUUID();
 

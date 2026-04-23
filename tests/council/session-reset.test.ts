@@ -5,6 +5,7 @@ import {
   BlindReviewActiveError,
   DeliberationInProgressError,
   EmptySegmentError,
+  MalformedResetSummaryError,
   ResetInProgressError,
 } from '../../src/council/session-reset-errors.js';
 import type { CouncilMessage } from '../../src/types.js';
@@ -160,6 +161,66 @@ describe('SessionReset', () => {
     await expect(reset.reset(handler as never, T)).rejects.toThrow('boom');
     expect(handler.sealCurrentSegment).not.toHaveBeenCalled();
     expect(handler.openNewSegment).not.toHaveBeenCalled();
+    expect(db.listSnapshotsForThread(T)).toHaveLength(0);
+  });
+
+  // Round-16 codex finding [P2-VALIDATION]: SessionReset used to commit
+  // whatever markdown the facilitator returned. parseSummaryMetadata is
+  // purely structural — if the LLM emitted "### Decisions" instead of
+  // "## Decisions" or skipped a section, it silently returned zero counts
+  // and the malformed snapshot was still persisted. From that point
+  // /councilhistory was wrong AND every future /councilreset on the
+  // thread carried the bad summary forward via buildPriorSummariesBlock.
+  // Snowball effect — one LLM format drift poisons all subsequent resets.
+  // Fix: validate all four required H2 sections are present before
+  // persist; throw MalformedResetSummaryError so the existing rollback
+  // semantics apply (no DB write, no in-memory mutation, /councilreset
+  // stays retry-safe).
+  it('throws MalformedResetSummaryError if facilitator response is missing required sections; no DB write, no mutation', async () => {
+    const db = new ResetSnapshotDB(':memory:');
+    // Facilitator returns markdown that LOOKS plausible but uses ### instead
+    // of ## — parseSummaryMetadata silently returned 0/0 in this case.
+    const malformedSummary = [
+      '### Decisions',
+      '- ship rust',
+      '',
+      '### Open Questions',
+      '- coverage?',
+      '',
+    ].join('\n');
+    const facilitator = makeFacilitator(malformedSummary);
+    const handler = makeHandler();
+    const reset = new SessionReset(db, facilitator as never);
+
+    await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(
+      MalformedResetSummaryError,
+    );
+    expect(handler.sealCurrentSegment).not.toHaveBeenCalled();
+    expect(handler.openNewSegment).not.toHaveBeenCalled();
+    expect(db.listSnapshotsForThread(T)).toHaveLength(0);
+  });
+
+  it('throws MalformedResetSummaryError if a required section is missing entirely; no DB write', async () => {
+    const db = new ResetSnapshotDB(':memory:');
+    // Missing the "## Blind-Review State" section.
+    const incompleteSummary = [
+      '## Decisions',
+      '- ship rust',
+      '',
+      '## Open Questions',
+      '- coverage?',
+      '',
+      '## Evidence Pointers',
+      '- turn 4',
+      '',
+    ].join('\n');
+    const facilitator = makeFacilitator(incompleteSummary);
+    const handler = makeHandler();
+    const reset = new SessionReset(db, facilitator as never);
+
+    await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(
+      MalformedResetSummaryError,
+    );
     expect(db.listSnapshotsForThread(T)).toHaveLength(0);
   });
 

@@ -202,4 +202,41 @@ describe('/councilhistory CLI', () => {
 
     expect(output[0]).toMatch(/not (available|wired|configured)/i);
   });
+
+  // Round-16 codex finding [P2-CLI]: round-15 fixed the Telegram path so
+  // /councilhistory works in facilitator-less deployments (DB-only
+  // dependency), but src/index.ts kept passing `{}` to CliCommandHandler
+  // when sessionReset was undefined — so CLI users in the same
+  // deployment lost /councilhistory for no functional reason. The
+  // CliCommandHandler contract is asserted here: given DB + threadId
+  // but no sessionReset/deliberationHandler, /councilhistory must
+  // function fully and /councilreset must reply "not configured".
+  it('serves /councilhistory and replies not-configured for /councilreset with DB-only wiring', async () => {
+    resetDb.recordSnapshot({
+      snapshotId: 'snap-db-only',
+      threadId: THREAD,
+      segmentIndex: 0,
+      sealedAt: '2026-04-23T09:00:00Z',
+      summaryMarkdown: VALID_SUMMARY,
+      metadata: { decisionsCount: 1, openQuestionsCount: 0, blindReviewSessionId: null },
+    });
+
+    const handler = new CliCommandHandler(
+      sessions,
+      memDb,
+      (line) => output.push(line),
+      // DB-only wiring: facilitator-less deployment shape.
+      { resetSnapshotDB: resetDb, threadId: THREAD },
+    );
+
+    await handler.handleAsync('councilhistory', '');
+    expect(output).toHaveLength(1);
+    expect(output[0]).toContain('[0]');
+    expect(output[0]).toContain('1 decisions');
+
+    output.length = 0;
+    await handler.handleAsync('councilreset', '');
+    expect(output).toHaveLength(1);
+    expect(output[0]).toMatch(/not configured/i);
+  });
 });
