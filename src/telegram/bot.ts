@@ -4,6 +4,8 @@ import type { AgentConfig, CouncilMessage } from '../types.js';
 import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
 import type { BlindReviewDB } from '../council/blind-review-db.js';
 import type { EventBus } from '../events/bus.js';
+import type { SessionReset, HandlerForReset } from '../council/session-reset.js';
+import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type { AdversarialMode, AdversarialRole } from '../council/adversarial-provers.js';
 import { formatGuessReveal, ROTATION_CALLBACK_PATTERN } from '../council/pvg-rotate.js';
 import { formatAdversarialDebrief } from '../council/adversarial-provers.js';
@@ -38,6 +40,12 @@ export interface PvgRotateWiring {
 export interface CritiqueUiWiring {
   state: PendingCritiqueState;
   sendFn?: (agentId: string, content: string, threadId?: number) => Promise<void>;
+}
+
+export interface SessionResetWiring {
+  reset: SessionReset;
+  deliberationHandler: HandlerForReset;
+  db: ResetSnapshotDB;
 }
 
 type CommandFlag =
@@ -133,6 +141,40 @@ export function buildCancelReviewHandler(groupChatId: number, store: BlindReview
     }
     store.delete(threadId);
     await ctx.reply('Blind-review session cancelled.');
+  };
+}
+
+export function buildCouncilResetHandler(groupChatId: number, wiring: SessionResetWiring) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    try {
+      const result = await wiring.reset.reset(wiring.deliberationHandler, threadId);
+      await ctx.reply(
+        `Sealed segment ${result.segmentIndex}: ${result.metadata.decisionsCount} decision(s), ${result.metadata.openQuestionsCount} open question(s). Starting next segment.`,
+      );
+    } catch (err) {
+      await ctx.reply((err as Error).message);
+    }
+  };
+}
+
+export function buildCouncilHistoryHandler(groupChatId: number, db: ResetSnapshotDB) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const snapshots = db.listSnapshotsForThread(threadId);
+    if (snapshots.length === 0) {
+      await ctx.reply('No resets yet in this session.');
+      return;
+    }
+    const lines = snapshots.map(
+      (s) =>
+        `[${s.segmentIndex}] ${s.sealedAt} — ${s.metadata.decisionsCount} decisions, ${s.metadata.openQuestionsCount} open`,
+    );
+    await ctx.reply(lines.join('\n'));
   };
 }
 
@@ -273,9 +315,10 @@ export class BotManager {
       blindReview?: BlindReviewWiring;
       pvgRotate?: PvgRotateWiring;
       critiqueUi?: CritiqueUiWiring;
+      sessionReset?: SessionResetWiring;
     } = {},
   ): void {
-    const { blindReview, pvgRotate, critiqueUi } = wiring;
+    const { blindReview, pvgRotate, critiqueUi, sessionReset } = wiring;
     const listenerBot = this.bots.get(this.listenerAgentId);
     if (!listenerBot) {
       throw new Error(`Listener bot not found for agent: ${this.listenerAgentId}`);
@@ -303,6 +346,11 @@ export class BotManager {
       ));
     } else {
       listenerBot.on('message:text', defaultTextHandler);
+    }
+
+    if (sessionReset) {
+      listenerBot.command('councilreset', buildCouncilResetHandler(this.groupChatId, sessionReset));
+      listenerBot.command('councilhistory', buildCouncilHistoryHandler(this.groupChatId, sessionReset.db));
     }
 
     if (blindReview) {
