@@ -118,8 +118,8 @@ export function createTelegramCritiquePromptUser(
 ): (req: CritiqueRequest) => Promise<CritiquePromptResult> {
   const { state, sendKeyboard } = input;
   return async (req) => {
-    return new Promise<CritiquePromptResult>((resolve, reject) => {
-      state.register(req.threadId, { resolve, reject });
+    return new Promise<CritiquePromptResult>((resolve) => {
+      state.register(req.threadId, { resolve });
       const banner =
         `Human-in-the-loop critique window\n` +
         `Previous turn: ${req.prevAgent}. Next up: ${req.nextAgent}.\n` +
