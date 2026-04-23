@@ -58,6 +58,7 @@ interface SessionState {
   critiqueLog: CritiqueSessionLog;
   blindReviewSessionId: string | null;
   currentTopic: string;
+  resetInFlight: boolean;
 }
 
 export class DeliberationHandler {
@@ -185,6 +186,7 @@ export class DeliberationHandler {
         critiqueLog: { agentTurns: 0, humanCritiques: [], stanceShiftsInducedByHuman: 0 },
         blindReviewSessionId: null,
         currentTopic: '',
+        resetInFlight: false,
       });
     }
     return this.sessions.get(threadId)!;
@@ -254,6 +256,14 @@ export class DeliberationHandler {
 
   public getCurrentTopic(threadId: number): string {
     return this.getSession(threadId).currentTopic;
+  }
+
+  public setResetInFlight(threadId: number, v: boolean): void {
+    this.getSession(threadId).resetInFlight = v;
+  }
+
+  public isResetInFlight(threadId: number): boolean {
+    return this.getSession(threadId).resetInFlight;
   }
 
   // Test-only: lets deliberation-segments.test.ts exercise segment lifecycle
