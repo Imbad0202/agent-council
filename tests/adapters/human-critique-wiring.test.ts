@@ -12,6 +12,7 @@ describe('HumanCritiqueWiring — adapter duck-typing', () => {
     const mockStore = {
       submit: vi.fn(),
       skip: vi.fn(),
+      onResolved: vi.fn(() => () => {}),
     } as unknown as HumanCritiqueStore;
 
     const wiring: HumanCritiqueWiring = {
@@ -39,6 +40,7 @@ describe('HumanCritiqueWiring — adapter duck-typing', () => {
     const mockStore = {
       submit: vi.fn(),
       skip: vi.fn(),
+      onResolved: vi.fn(() => () => {}),
     } as unknown as HumanCritiqueStore;
 
     const wiring: HumanCritiqueWiring = {
@@ -51,7 +53,7 @@ describe('HumanCritiqueWiring — adapter duck-typing', () => {
   it('CLI critique hook prompts user via readline when human-critique.requested fires', async () => {
     const submit = vi.fn();
     const skip = vi.fn();
-    const mockStore = { submit, skip } as unknown as HumanCritiqueStore;
+    const mockStore = { submit, skip, onResolved: vi.fn(() => () => {}) } as unknown as HumanCritiqueStore;
 
     const adapter = new CliAdapter({ verbose: false });
     const promptUser = vi.fn().mockResolvedValue({
@@ -83,7 +85,7 @@ describe('HumanCritiqueWiring — adapter duck-typing', () => {
   it('CLI critique hook calls store.skip when promptUser returns skipped', async () => {
     const submit = vi.fn();
     const skip = vi.fn();
-    const mockStore = { submit, skip } as unknown as HumanCritiqueStore;
+    const mockStore = { submit, skip, onResolved: vi.fn(() => () => {}) } as unknown as HumanCritiqueStore;
 
     const adapter = new CliAdapter({ verbose: false });
     const promptUser = vi.fn().mockResolvedValue({ kind: 'skipped' });
@@ -105,7 +107,7 @@ describe('HumanCritiqueWiring — adapter duck-typing', () => {
   it('if promptUser throws, wiring falls through to store.skip("user-skip")', async () => {
     const submit = vi.fn();
     const skip = vi.fn();
-    const mockStore = { submit, skip } as unknown as HumanCritiqueStore;
+    const mockStore = { submit, skip, onResolved: vi.fn(() => () => {}) } as unknown as HumanCritiqueStore;
 
     const adapter = new CliAdapter({ verbose: false });
     const promptUser = vi.fn().mockRejectedValue(new Error('readline closed'));
@@ -117,5 +119,42 @@ describe('HumanCritiqueWiring — adapter duck-typing', () => {
 
     expect(skip).toHaveBeenCalledWith(7, 'user-skip');
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  it('cancelPrompt is invoked when store.onResolved fires (store-wins-timer path)', async () => {
+    const submit = vi.fn();
+    const skip = vi.fn();
+    // Capture the listener so we can simulate "store resolved first".
+    let storeListener: (() => void) | undefined;
+    const mockStore = {
+      submit,
+      skip,
+      onResolved: (_threadId: number, cb: () => void) => {
+        storeListener = cb;
+        return () => { storeListener = undefined; };
+      },
+    } as unknown as HumanCritiqueStore;
+
+    const adapter = new CliAdapter({ verbose: false });
+    const cancelPrompt = vi.fn((threadId: number) => {
+      // When the store fires the listener, drain the prompt — simulated here
+      // by having cancelPrompt resolve the pending promptUser promise.
+      promptUserResolvers[threadId]?.({ kind: 'skipped' });
+    });
+    const promptUserResolvers: Record<number, (r: { kind: 'skipped' }) => void> = {};
+    const promptUser = vi.fn(
+      (req: { threadId: number }) =>
+        new Promise<{ kind: 'skipped' }>((resolve) => {
+          promptUserResolvers[req.threadId] = resolve;
+        }),
+    );
+    adapter.setHumanCritiqueWiring!({ store: mockStore, promptUser, cancelPrompt });
+
+    const dispatch = adapter.handleCritiqueRequest!({ threadId: 9, prevAgent: 'a', nextAgent: 'b' });
+    // Simulate store's timeout firing while promptUser still pending.
+    storeListener!();
+    await dispatch;
+
+    expect(cancelPrompt).toHaveBeenCalledWith(9);
   });
 });

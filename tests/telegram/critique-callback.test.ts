@@ -25,8 +25,6 @@ describe('critique callback handler', () => {
     let resolved: CritiquePromptResult | undefined;
     state.register(55, {
       resolve: (r) => { resolved = r; },
-      reject: vi.fn(),
-      timeoutMs: 30_000,
     });
     const sendFn = vi.fn();
 
@@ -48,7 +46,7 @@ describe('critique callback handler', () => {
   it('challenge button advances state to awaiting-text and prompts user', async () => {
     const state = new PendingCritiqueState();
     const resolve = vi.fn();
-    state.register(77, { resolve, reject: vi.fn(), timeoutMs: 30_000 });
+    state.register(77, { resolve });
     const sendFn = vi.fn();
 
     const ctx: any = {
@@ -72,8 +70,8 @@ describe('critique callback handler', () => {
 
   it('question and addPremise buttons also transition to awaiting-text', async () => {
     const state = new PendingCritiqueState();
-    state.register(1, { resolve: vi.fn(), reject: vi.fn(), timeoutMs: 30_000 });
-    state.register(2, { resolve: vi.fn(), reject: vi.fn(), timeoutMs: 30_000 });
+    state.register(1, { resolve: vi.fn() });
+    state.register(2, { resolve: vi.fn() });
     const sendFn = vi.fn();
     const cb = buildCritiqueCallback(100, state, sendFn);
 
@@ -95,7 +93,7 @@ describe('critique callback handler', () => {
   it('ignores callback from wrong chat', async () => {
     const state = new PendingCritiqueState();
     const resolve = vi.fn();
-    state.register(55, { resolve, reject: vi.fn(), timeoutMs: 30_000 });
+    state.register(55, { resolve });
     const sendFn = vi.fn();
     const ctx: any = {
       chat: { id: 999 },

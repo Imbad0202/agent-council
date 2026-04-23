@@ -40,29 +40,34 @@ function hasSetCritiqueUiWiring(a: unknown): a is CritiqueUiAdapter {
   return typeof (a as CritiqueUiAdapter).setCritiqueUiWiring === 'function';
 }
 
-// Pick the right promptUser for the given adapter:
-// - CLI adapter: readline-based two-stage picker
-// - Telegram adapter: InlineKeyboard 4-button flow (factory sets up its own
-//   PendingCritiqueState and registers it on the adapter)
-// - Anything else: always-skip so deliberation doesn't stall
+// Pick the right promptUser (and matching cancelPrompt) for the adapter:
+// - CLI adapter: readline-based two-stage picker, no cancel hook needed (the
+//   readline prompt already times out with the store window).
+// - Telegram adapter: InlineKeyboard 4-button flow. cancelPrompt drains the
+//   PendingCritiqueState entry when the store's timer fires first, so we
+//   don't run a parallel state-side timer.
+// - Anything else: always-skip so deliberation doesn't stall.
 function buildPromptUserForAdapter(
   adapter: ReturnType<typeof createAdapter>,
-): HumanCritiqueWiring['promptUser'] {
+): Pick<HumanCritiqueWiring, 'promptUser' | 'cancelPrompt'> {
   if (hasDefaultPromptUser(adapter)) {
-    return adapter.defaultPromptUser.bind(adapter);
+    return { promptUser: adapter.defaultPromptUser.bind(adapter) };
   }
   if (hasSetCritiqueUiWiring(adapter) && adapter.sendMessageWithKeyboard) {
     const state = new PendingCritiqueState();
     adapter.setCritiqueUiWiring({ state });
     const sendKeyboardFn = adapter.sendMessageWithKeyboard.bind(adapter);
-    return createTelegramCritiquePromptUser({
+    const promptUser = createTelegramCritiquePromptUser({
       state,
       sendKeyboard: (text, keyboard, threadId) =>
         sendKeyboardFn(CRITIQUE_PROMPT_AGENT_ID, text, keyboard, threadId),
-      timeoutMs: 30_000,
     });
+    return {
+      promptUser,
+      cancelPrompt: (threadId: number) => state.resolveSkipped(threadId),
+    };
   }
-  return async (): Promise<CritiquePromptResult> => ({ kind: 'skipped' });
+  return { promptUser: async (): Promise<CritiquePromptResult> => ({ kind: 'skipped' }) };
 }
 
 async function main() {
@@ -223,8 +228,8 @@ async function main() {
   // Telegram: InlineKeyboard flow — four buttons (challenge/question/addPremise/skip)
   // followed by a free-text message for stance submissions.
   if (adapter.setHumanCritiqueWiring && adapter.handleCritiqueRequest) {
-    const promptUser = buildPromptUserForAdapter(adapter);
-    adapter.setHumanCritiqueWiring({ store: critiqueStore, promptUser });
+    const parts = buildPromptUserForAdapter(adapter);
+    adapter.setHumanCritiqueWiring({ store: critiqueStore, ...parts });
     bus.on('human-critique.requested', async (req) => {
       try {
         await adapter.handleCritiqueRequest!(req);

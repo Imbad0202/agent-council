@@ -94,4 +94,42 @@ describe('HumanCritiqueStore', () => {
       expect(outcome.reason).toBe('user-skip');
     }
   });
+
+  it('onResolved listener fires when timeout closes the window', async () => {
+    vi.useFakeTimers();
+    const promise = store.open(1, { prevAgent: 'a', nextAgent: 'b', timeoutMs: 5_000 });
+    const listener = vi.fn();
+    store.onResolved(1, listener);
+
+    vi.advanceTimersByTime(5_001);
+    await promise;
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('onResolved listener fires when submit closes the window', async () => {
+    const promise = store.open(1, { prevAgent: 'a', nextAgent: 'b', timeoutMs: 10_000 });
+    const listener = vi.fn();
+    store.onResolved(1, listener);
+    store.submit(1, { stance: 'challenge', content: 'x' });
+    await promise;
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('onResolved unsubscribe prevents the callback from firing', async () => {
+    vi.useFakeTimers();
+    const promise = store.open(1, { prevAgent: 'a', nextAgent: 'b', timeoutMs: 5_000 });
+    const listener = vi.fn();
+    const off = store.onResolved(1, listener);
+    off();
+    vi.advanceTimersByTime(5_001);
+    await promise;
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('onResolved on a non-existent window fires immediately (already-resolved guard)', () => {
+    const listener = vi.fn();
+    store.onResolved(999, listener);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
 });
