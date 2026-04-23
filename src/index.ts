@@ -11,6 +11,11 @@ import { EventBus } from './events/bus.js';
 import { GatewayRouter } from './gateway/router.js';
 import { IntentGate } from './council/intent-gate.js';
 import { DeliberationHandler } from './council/deliberation.js';
+import { SessionReset } from './council/session-reset.js';
+import { ResetSnapshotDB } from './storage/reset-snapshot-db.js';
+import { CliCommandHandler } from './adapters/cli-commands.js';
+import { routeCliInput } from './adapters/cli-dispatch.js';
+import { CliSessionManager } from './adapters/cli-sessions.js';
 import { BlindReviewDB } from './council/blind-review-db.js';
 import { PvgRotateStore } from './council/pvg-rotate-store.js';
 import { PvgRotateDB } from './council/pvg-rotate-db.js';
@@ -23,6 +28,7 @@ import {
 } from './telegram/critique-callback.js';
 import type { CritiqueUiAdapter } from './adapters/telegram.js';
 import type { DefaultCritiquePromptAdapter } from './adapters/cli.js';
+import type { SessionResetAdapter } from './adapters/telegram.js';
 import { FacilitatorAgent } from './council/facilitator.js';
 import { ActiveRecall } from './memory/active-recall.js';
 import { ExecutionDispatcher } from './execution/dispatcher.js';
@@ -38,6 +44,10 @@ function hasDefaultPromptUser(a: unknown): a is DefaultCritiquePromptAdapter {
 
 function hasSetCritiqueUiWiring(a: unknown): a is CritiqueUiAdapter {
   return typeof (a as CritiqueUiAdapter).setCritiqueUiWiring === 'function';
+}
+
+function hasSetSessionResetWiring(a: unknown): a is SessionResetAdapter {
+  return typeof (a as SessionResetAdapter).setSessionResetWiring === 'function';
 }
 
 // Pick the right promptUser (and matching cancelPrompt) for the adapter:
@@ -148,9 +158,12 @@ async function main() {
   new IntentGate(bus, mainProvider, councilConfig.systemModels.intentClassification);
   console.log('IntentGate initialized');
 
-  // Memory layer
+  // Memory layer — DB instance is shared with CliCommandHandler below when
+  // the CLI adapter is active so /memories / /memory / /forget see the same
+  // rows the deliberation path writes.
+  let memoryDb: MemoryDB | undefined;
   if (councilConfig.memory) {
-    const memoryDb = new MemoryDB(resolve(councilConfig.memory.dbPath));
+    memoryDb = new MemoryDB(resolve(councilConfig.memory.dbPath));
     const activeRecall = new ActiveRecall(bus, memoryDb);
     const tracker = new UsageTracker(memoryDb);
 
@@ -169,6 +182,7 @@ async function main() {
   const pvgRotateStore = new PvgRotateStore();
   const pvgRotateDB = new PvgRotateDB(resolve('data/council.db'));
   const critiqueStore = new HumanCritiqueStore();
+  const resetSnapshotDB = new ResetSnapshotDB(resolve('data/council.db'));
   const deliberationHandler = new DeliberationHandler(
     bus,
     peerWorkers,
@@ -181,9 +195,19 @@ async function main() {
         : undefined,
       pvgRotateStore,
       critiqueStore,
+      resetSnapshotDB,
     },
   );
   console.log('DeliberationHandler initialized');
+
+  // Session reset — requires a facilitatorWorker. If none is configured,
+  // /councilreset stays unwired and the command reports "not configured".
+  const sessionReset = facilitatorWorker
+    ? new SessionReset(resetSnapshotDB, facilitatorWorker)
+    : undefined;
+  if (sessionReset) {
+    console.log('SessionReset initialized');
+  }
 
   // Wire BlindReviewDB + persist-failed event
   const blindReviewDB = new BlindReviewDB(resolve('data/council.db'));
@@ -201,6 +225,16 @@ async function main() {
       db: pvgRotateDB,
       sendFn: (agentId: string, content: string, threadId?: number) => adapter.send(agentId, content, { agentName: '' }, threadId),
       bus,
+    });
+  }
+
+  // Wire /councilreset + /councilhistory into the listener bot (Telegram
+  // only; adapters without setSessionResetWiring silently skip).
+  if (sessionReset && hasSetSessionResetWiring(adapter)) {
+    adapter.setSessionResetWiring({
+      reset: sessionReset,
+      deliberationHandler,
+      db: resetSnapshotDB,
     });
   }
 
@@ -266,11 +300,39 @@ async function main() {
   const router = new GatewayRouter(bus, sendFn, councilConfig);
   console.log('GatewayRouter initialized (event-driven)');
 
+  // CLI command dispatcher (scoped to CLI; Telegram has its own bot.command
+  // registration path in setupListener).
+  const cliCommandHandler =
+    args.adapter === 'cli'
+      ? new CliCommandHandler(
+          new CliSessionManager(resolve('data')),
+          // Reuse the memoryDb opened by the Memory layer so both paths see
+          // the same rows; fall back to a fresh handle only when the Memory
+          // layer is disabled (CLI still needs /memories to not crash).
+          memoryDb ?? new MemoryDB(resolve('data/council.db')),
+          (line) => console.log(line),
+          sessionReset
+            ? {
+                sessionReset,
+                deliberationHandler,
+                resetSnapshotDB,
+                // CLI has one implicit thread; Telegram threads are per-chat.
+                threadId: 0,
+              }
+            : {},
+        )
+      : undefined;
+
   // ── Adapter startup ──────────────────────────────────────────────────
 
   console.log('Agent Council v0.2.1 starting...');
 
   await adapter.start((msg) => {
+    if (cliCommandHandler) {
+      // CLI: route slash commands to CliCommandHandler; everything else to router.
+      void routeCliInput(msg.content, router, cliCommandHandler, msg.threadId ?? 0);
+      return;
+    }
     router.handleHumanMessage({
       id: `${args.adapter}-${Date.now()}`,
       role: 'human',
