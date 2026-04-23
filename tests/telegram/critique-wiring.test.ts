@@ -56,9 +56,7 @@ describe('BotManager.setupListener — critique UI wiring', () => {
     const state = new PendingCritiqueState();
     manager.setupListener(
       { handleHumanMessage: vi.fn() },
-      undefined,
-      undefined,
-      { state },
+      { critiqueUi: { state } },
     );
 
     const patterns = mockBot.callbackQuery.mock.calls.map((call) => call[0]);
@@ -80,16 +78,12 @@ describe('BotManager.setupListener — critique UI wiring', () => {
     let resolved: unknown;
     state.register(77, {
       resolve: (r) => { resolved = r; },
-      reject: vi.fn(),
-      timeoutMs: 30_000,
     });
     state.advanceToText(77, 'challenge');
 
     manager.setupListener(
       { handleHumanMessage },
-      undefined,
-      undefined,
-      { state },
+      { critiqueUi: { state } },
     );
 
     // Grab the 'message:text' handler registered on the bot
@@ -114,9 +108,7 @@ describe('BotManager.setupListener — critique UI wiring', () => {
 
     manager.setupListener(
       { handleHumanMessage },
-      undefined,
-      undefined,
-      { state },
+      { critiqueUi: { state } },
     );
 
     const textCall = mockBot.on.mock.calls.find((c) => c[0] === 'message:text');

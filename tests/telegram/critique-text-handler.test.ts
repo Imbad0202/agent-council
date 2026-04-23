@@ -20,8 +20,6 @@ describe('buildCritiqueTextHandler', () => {
     let resolved: CritiquePromptResult | undefined;
     state.register(77, {
       resolve: (r) => { resolved = r; },
-      reject: vi.fn(),
-      timeoutMs: 30_000,
     });
     state.advanceToText(77, 'challenge');
     const fallthrough = vi.fn();
@@ -48,7 +46,7 @@ describe('buildCritiqueTextHandler', () => {
 
   it('falls through when the pending critique is still in awaiting-button phase', async () => {
     const state = new PendingCritiqueState();
-    state.register(77, { resolve: vi.fn(), reject: vi.fn(), timeoutMs: 30_000 });
+    state.register(77, { resolve: vi.fn() });
     // still awaiting-button — user shouldn't be forced to type yet
     const fallthrough = vi.fn();
     const handler = buildCritiqueTextHandler(100, state, fallthrough);
@@ -64,7 +62,7 @@ describe('buildCritiqueTextHandler', () => {
   it('ignores messages from wrong chat', async () => {
     const state = new PendingCritiqueState();
     const resolve = vi.fn();
-    state.register(77, { resolve, reject: vi.fn(), timeoutMs: 30_000 });
+    state.register(77, { resolve });
     state.advanceToText(77, 'question');
     const fallthrough = vi.fn();
     const handler = buildCritiqueTextHandler(100, state, fallthrough);
@@ -79,7 +77,7 @@ describe('buildCritiqueTextHandler', () => {
   it('ignores messages from bots', async () => {
     const state = new PendingCritiqueState();
     const resolve = vi.fn();
-    state.register(77, { resolve, reject: vi.fn(), timeoutMs: 30_000 });
+    state.register(77, { resolve });
     state.advanceToText(77, 'question');
     const fallthrough = vi.fn();
     const handler = buildCritiqueTextHandler(100, state, fallthrough);
@@ -95,8 +93,6 @@ describe('buildCritiqueTextHandler', () => {
     let resolved: CritiquePromptResult | undefined;
     state.register(100, {
       resolve: (r) => { resolved = r; },
-      reject: vi.fn(),
-      timeoutMs: 30_000,
     });
     state.advanceToText(100, 'addPremise');
     const fallthrough = vi.fn();
@@ -111,7 +107,7 @@ describe('buildCritiqueTextHandler', () => {
   it('falls through when the message text is empty (whitespace trimmed)', async () => {
     const state = new PendingCritiqueState();
     const resolve = vi.fn();
-    state.register(77, { resolve, reject: vi.fn(), timeoutMs: 30_000 });
+    state.register(77, { resolve });
     state.advanceToText(77, 'question');
     const fallthrough = vi.fn();
     const handler = buildCritiqueTextHandler(100, state, fallthrough);

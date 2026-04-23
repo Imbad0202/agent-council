@@ -10,7 +10,6 @@ describe('createTelegramCritiquePromptUser', () => {
     const promptUser = createTelegramCritiquePromptUser({
       state,
       sendKeyboard,
-      timeoutMs: 30_000,
     });
 
     const pending = promptUser({ threadId: 42, prevAgent: 'huahua', nextAgent: 'binbin' });
@@ -45,7 +44,6 @@ describe('createTelegramCritiquePromptUser', () => {
     const promptUser = createTelegramCritiquePromptUser({
       state,
       sendKeyboard,
-      timeoutMs: 30_000,
     });
 
     const pending = promptUser({ threadId: 7, prevAgent: 'a', nextAgent: 'b' });
@@ -62,7 +60,6 @@ describe('createTelegramCritiquePromptUser', () => {
     const promptUser = createTelegramCritiquePromptUser({
       state,
       sendKeyboard,
-      timeoutMs: 30_000,
     });
 
     const result = await promptUser({ threadId: 9, prevAgent: 'a', nextAgent: 'b' });

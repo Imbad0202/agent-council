@@ -71,9 +71,11 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
           onMessage({ content: councilMsg.content, threadId: councilMsg.threadId });
         },
       },
-      this.blindReviewWiring,
-      this.pvgRotateWiring,
-      this.critiqueUiWiring,
+      {
+        blindReview: this.blindReviewWiring,
+        pvgRotate: this.pvgRotateWiring,
+        critiqueUi: this.critiqueUiWiring,
+      },
     );
     await listenerBot.api.deleteWebhook({ drop_pending_updates: true });
     for (let attempt = 1; attempt <= 6; attempt++) {

@@ -269,10 +269,13 @@ export class BotManager {
 
   setupListener(
     handler: { handleHumanMessage: (msg: CouncilMessage) => void },
-    blindReviewWiring?: BlindReviewWiring,
-    pvgRotateWiring?: PvgRotateWiring,
-    critiqueUiWiring?: CritiqueUiWiring,
+    wiring: {
+      blindReview?: BlindReviewWiring;
+      pvgRotate?: PvgRotateWiring;
+      critiqueUi?: CritiqueUiWiring;
+    } = {},
   ): void {
+    const { blindReview, pvgRotate, critiqueUi } = wiring;
     const listenerBot = this.bots.get(this.listenerAgentId);
     if (!listenerBot) {
       throw new Error(`Listener bot not found for agent: ${this.listenerAgentId}`);
@@ -292,52 +295,52 @@ export class BotManager {
       handler.handleHumanMessage(councilMsg);
     };
 
-    if (critiqueUiWiring) {
+    if (critiqueUi) {
       listenerBot.on('message:text', buildCritiqueTextHandler(
         this.groupChatId,
-        critiqueUiWiring.state,
+        critiqueUi.state,
         defaultTextHandler,
       ));
     } else {
       listenerBot.on('message:text', defaultTextHandler);
     }
 
-    if (blindReviewWiring) {
+    if (blindReview) {
       listenerBot.command('blindreview', buildBlindReviewHandler(this.groupChatId, handler));
-      listenerBot.command('cancelreview', buildCancelReviewHandler(this.groupChatId, blindReviewWiring.store));
+      listenerBot.command('cancelreview', buildCancelReviewHandler(this.groupChatId, blindReview.store));
       listenerBot.callbackQuery(/^br-score:([^:]+):(\d)$/, buildBlindReviewCallback(
         this.groupChatId,
-        blindReviewWiring.store,
-        blindReviewWiring.sendFn,
-        blindReviewWiring.agentMeta,
-        blindReviewWiring.bus,
-        blindReviewWiring.db,
-        blindReviewWiring.modelConfigForAgent,
+        blindReview.store,
+        blindReview.sendFn,
+        blindReview.agentMeta,
+        blindReview.bus,
+        blindReview.db,
+        blindReview.modelConfigForAgent,
       ));
     }
 
-    if (pvgRotateWiring) {
+    if (pvgRotate) {
       listenerBot.callbackQuery(
         ROTATION_CALLBACK_PATTERN,
         buildPvgRotateCallback(
           this.groupChatId,
-          pvgRotateWiring.store,
-          pvgRotateWiring.db,
-          pvgRotateWiring.sendFn,
-          pvgRotateWiring.bus,
+          pvgRotate.store,
+          pvgRotate.db,
+          pvgRotate.sendFn,
+          pvgRotate.bus,
         ),
       );
     }
 
-    if (critiqueUiWiring) {
-      const configuredSendFn = critiqueUiWiring.sendFn;
+    if (critiqueUi) {
+      const configuredSendFn = critiqueUi.sendFn;
       const followUpSend = configuredSendFn
         ? (text: string, threadId: number) =>
             configuredSendFn(CRITIQUE_PROMPT_AGENT_ID, text, threadId)
         : async () => {};
       listenerBot.callbackQuery(
         CRITIQUE_CALLBACK_PATTERN,
-        buildCritiqueCallback(this.groupChatId, critiqueUiWiring.state, followUpSend),
+        buildCritiqueCallback(this.groupChatId, critiqueUi.state, followUpSend),
       );
     }
   }

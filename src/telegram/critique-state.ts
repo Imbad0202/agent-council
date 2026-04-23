@@ -7,22 +7,21 @@ export type PendingCritique =
 
 interface RegisterInput {
   resolve: (result: CritiquePromptResult) => void;
-  reject: (err: Error) => void;
-  timeoutMs: number;
 }
 
 interface InternalEntry {
   phase: 'awaiting-button' | 'awaiting-text';
   stance?: HumanCritiqueStance;
   resolve: (result: CritiquePromptResult) => void;
-  reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
 }
 
 // Per-thread state for the Telegram InlineKeyboard critique flow.
 // A critique lives through two phases: tap a button (awaiting-button), then
-// optionally type the critique text (awaiting-text). Timeout falls back to
-// skipped so a forgotten prompt never stalls the deliberation loop.
+// optionally type the critique text (awaiting-text).
+//
+// The authoritative timeout lives in HumanCritiqueStore; when the store
+// closes a window it calls back via wiring.cancelPrompt → resolveSkipped(),
+// so this state is just UI bookkeeping. drain() covers bot.stop() shutdown.
 export class PendingCritiqueState {
   private entries = new Map<number, InternalEntry>();
 
@@ -30,14 +29,9 @@ export class PendingCritiqueState {
     if (this.entries.has(threadId)) {
       throw new Error(`critique already pending for thread ${threadId}`);
     }
-    const timer = setTimeout(() => {
-      this.resolveSkipped(threadId);
-    }, input.timeoutMs);
     this.entries.set(threadId, {
       phase: 'awaiting-button',
       resolve: input.resolve,
-      reject: input.reject,
-      timer,
     });
   }
 
@@ -50,8 +44,8 @@ export class PendingCritiqueState {
     return { phase: 'awaiting-button' };
   }
 
-  // Skip all pending critiques — for shutdown so setTimeout timers don't
-  // linger and hold the event loop open past bot.stop().
+  // Skip all pending critiques — for shutdown so dangling entries don't
+  // leak past bot.stop().
   drain(): void {
     for (const threadId of [...this.entries.keys()]) {
       this.resolveSkipped(threadId);
@@ -68,7 +62,6 @@ export class PendingCritiqueState {
   resolveSkipped(threadId: number): void {
     const entry = this.entries.get(threadId);
     if (!entry) return;
-    clearTimeout(entry.timer);
     this.entries.delete(threadId);
     entry.resolve({ kind: 'skipped' });
   }
@@ -77,7 +70,6 @@ export class PendingCritiqueState {
     const entry = this.entries.get(threadId);
     if (!entry) return;
     if (entry.phase !== 'awaiting-text' || !entry.stance) return;
-    clearTimeout(entry.timer);
     this.entries.delete(threadId);
     entry.resolve({ kind: 'submitted', stance: entry.stance, content });
   }

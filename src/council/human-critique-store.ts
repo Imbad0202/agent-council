@@ -22,12 +22,18 @@ export interface PendingWindow {
 interface InternalWindow extends PendingWindow {
   resolve: (outcome: CritiqueOutcome) => void;
   timer: ReturnType<typeof setTimeout>;
+  listeners: Set<() => void>;
 }
 
 // Pending-window store for human critique injection between agent turns.
 // Lifecycle mirrors BlindReviewStore: per-thread, in-memory, bot-restart clears.
 // Difference: each window wraps a Promise so deliberation.ts can await the
 // outcome without polling.
+//
+// Authoritative timer: the store owns the single setTimeout for each window.
+// Adapters (CLI / Telegram) subscribe via onResolved() and drain their own
+// per-thread bookkeeping when the window closes — they do not run parallel
+// timers.
 export class HumanCritiqueStore {
   private windows = new Map<number, InternalWindow>();
 
@@ -37,10 +43,7 @@ export class HumanCritiqueStore {
     }
     return new Promise<CritiqueOutcome>((resolve) => {
       const timer = setTimeout(() => {
-        const window = this.windows.get(threadId);
-        if (!window) return;
-        this.windows.delete(threadId);
-        window.resolve({ kind: 'skipped', reason: 'timeout' });
+        this.close(threadId, { kind: 'skipped', reason: 'timeout' });
       }, opts.timeoutMs);
 
       this.windows.set(threadId, {
@@ -50,6 +53,7 @@ export class HumanCritiqueStore {
         status: 'pending',
         resolve,
         timer,
+        listeners: new Set(),
       });
     });
   }
@@ -65,18 +69,38 @@ export class HumanCritiqueStore {
     threadId: number,
     input: { stance: HumanCritiqueStance; content: string },
   ): void {
-    const window = this.windows.get(threadId);
-    if (!window) return;
-    clearTimeout(window.timer);
-    this.windows.delete(threadId);
-    window.resolve({ kind: 'submitted', stance: input.stance, content: input.content });
+    this.close(threadId, { kind: 'submitted', stance: input.stance, content: input.content });
   }
 
   skip(threadId: number, reason: SkipReason): void {
+    this.close(threadId, { kind: 'skipped', reason });
+  }
+
+  // Subscribe to window closure for the given thread. Returns an unsubscribe.
+  // Used by wiring.dispatchCritiqueRequest so the adapter can drain its
+  // pending UI entry when the store's timer fires first. Fires at most once.
+  // Fires immediately if no window exists for threadId — callers must subscribe
+  // AFTER open() to observe that window (dispatchCritiqueRequest relies on the
+  // requested→promptUser ordering for this).
+  onResolved(threadId: number, listener: () => void): () => void {
+    const window = this.windows.get(threadId);
+    if (!window) {
+      listener();
+      return () => {};
+    }
+    window.listeners.add(listener);
+    return () => { window.listeners.delete(listener); };
+  }
+
+  private close(threadId: number, outcome: CritiqueOutcome): void {
     const window = this.windows.get(threadId);
     if (!window) return;
     clearTimeout(window.timer);
     this.windows.delete(threadId);
-    window.resolve({ kind: 'skipped', reason });
+    const listeners = [...window.listeners];
+    for (const l of listeners) {
+      try { l(); } catch { /* listener errors must not cancel siblings or the promise resolve */ }
+    }
+    window.resolve(outcome);
   }
 }

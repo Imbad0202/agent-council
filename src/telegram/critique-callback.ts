@@ -103,22 +103,23 @@ type SendKeyboardFn = (
 export interface CreateCritiquePromptUserInput {
   state: PendingCritiqueState;
   sendKeyboard: SendKeyboardFn;
-  timeoutMs: number;
 }
 
 // Factory for the Telegram-flavored promptUser used by HumanCritiqueWiring.
 // Sends the 4-button keyboard, parks a pending entry in state keyed by
 // threadId, and returns a promise that the callback/text handlers resolve
 // when the user taps a button (and, for stance buttons, types the text).
-// If the initial keyboard send fails, we resolve skipped so the deliberation
-// loop can't stall on a network blip.
+// Timeout authority lives in HumanCritiqueStore; when the store closes the
+// window first, wiring.cancelPrompt → state.resolveSkipped drains this
+// entry. If the initial keyboard send fails, we resolve skipped so the
+// deliberation loop can't stall on a network blip.
 export function createTelegramCritiquePromptUser(
   input: CreateCritiquePromptUserInput,
 ): (req: CritiqueRequest) => Promise<CritiquePromptResult> {
-  const { state, sendKeyboard, timeoutMs } = input;
+  const { state, sendKeyboard } = input;
   return async (req) => {
     return new Promise<CritiquePromptResult>((resolve, reject) => {
-      state.register(req.threadId, { resolve, reject, timeoutMs });
+      state.register(req.threadId, { resolve, reject });
       const banner =
         `Human-in-the-loop critique window\n` +
         `Previous turn: ${req.prevAgent}. Next up: ${req.nextAgent}.\n` +
