@@ -106,4 +106,41 @@ describe('TelegramAdapter session-reset wiring', () => {
 
     await adapter.stop();
   });
+
+  // Round-8 codex finding [P1]: grammY runs middleware in registration order
+  // and `on('message:text', defaultTextHandler)` consumes every text update
+  // including `/councilreset` unless the command handlers are registered
+  // FIRST. Asserting relative ordering by tracking the interleaved call
+  // sequence on mockBot.command vs mockBot.on.
+  it('registers /councilreset and /councilhistory BEFORE the catch-all message:text handler', async () => {
+    const adapter = new TelegramAdapter(config);
+    const db = new ResetSnapshotDB(':memory:');
+    const reset = new SessionReset(db, makeFacilitator() as never);
+    const delib = makeDelibHandler();
+    adapter.setSessionResetWiring({ reset, deliberationHandler: delib as never, db });
+
+    // Record the interleaved invocation order across both mocks.
+    const order: string[] = [];
+    mockBot.command.mockImplementation((name: string) => {
+      order.push(`command:${name}`);
+    });
+    mockBot.on.mockImplementation((filter: string) => {
+      order.push(`on:${filter}`);
+    });
+
+    await adapter.start(() => {});
+
+    const councilResetIdx = order.indexOf('command:councilreset');
+    const councilHistoryIdx = order.indexOf('command:councilhistory');
+    const textHandlerIdx = order.indexOf('on:message:text');
+
+    expect(councilResetIdx).toBeGreaterThanOrEqual(0);
+    expect(councilHistoryIdx).toBeGreaterThanOrEqual(0);
+    expect(textHandlerIdx).toBeGreaterThanOrEqual(0);
+    expect(councilResetIdx).toBeLessThan(textHandlerIdx);
+    expect(councilHistoryIdx).toBeLessThan(textHandlerIdx);
+
+    await adapter.stop();
+    db.close();
+  });
 });

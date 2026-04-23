@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type { CouncilMessage, ResetSnapshot } from '../types.js';
-import { buildResetSummaryPrompt, parseSummaryMetadata } from './session-reset-prompts.js';
+import {
+  buildPriorSummariesBlock,
+  buildResetSummaryPrompt,
+  parseSummaryMetadata,
+} from './session-reset-prompts.js';
 import {
   BlindReviewActiveError,
   DeliberationInProgressError,
@@ -62,6 +66,26 @@ export class SessionReset {
     handler.setResetInFlight(threadId, true);
     try {
       const messages = handler.getCurrentSegmentMessages(threadId);
+
+      // Round-8 codex finding [P1]: after the first reset, the prior segment
+      // exists only as a DB snapshot. If we only feed the current-segment
+      // messages to the facilitator, the second /councilreset summary silently
+      // drops decisions/open questions from every earlier sealed segment.
+      // Prepend the existing snapshot markdowns as a single synthetic human
+      // message so the facilitator keeps rolling every prior sealed summary
+      // forward into the next one.
+      const existing = this.db.listSnapshotsForThread(threadId);
+      const priorSummariesMsg: CouncilMessage | null =
+        existing.length > 0
+          ? {
+              id: `reset-prior-summaries-${Date.now()}`,
+              role: 'human',
+              content: buildPriorSummariesBlock(existing),
+              timestamp: Date.now(),
+              threadId,
+            }
+          : null;
+
       const promptBody = buildResetSummaryPrompt({
         topic: handler.getCurrentTopic(threadId),
         turnsInSegment: messages.length,
@@ -74,8 +98,13 @@ export class SessionReset {
         threadId,
       };
 
+      const facilitatorMessages: CouncilMessage[] = [
+        ...(priorSummariesMsg ? [priorSummariesMsg] : []),
+        ...messages,
+        summaryMsg,
+      ];
       const response = await this.facilitator.respondDeterministic(
-        [...messages, summaryMsg],
+        facilitatorMessages,
         'synthesizer',
       );
 
@@ -90,7 +119,6 @@ export class SessionReset {
       // while the old snapshot rows still live in SQLite. Take max(existing)+1
       // from the DB and fall back to the in-memory index only for the first
       // reset on a fresh thread.
-      const existing = this.db.listSnapshotsForThread(threadId);
       const segmentIndex =
         existing.length > 0
           ? Math.max(...existing.map((s) => s.segmentIndex)) + 1

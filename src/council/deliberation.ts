@@ -175,6 +175,15 @@ export class DeliberationHandler {
       if (!session) return;
       session.blindReviewSessionId = null;
     });
+
+    // Round-8 codex finding [P2]: `/cancelreview` has to clear the guard
+    // too, otherwise /councilreset stays blocked on the thread forever.
+    // Mirrors the `revealed` listener exactly.
+    this.bus.on('blind-review.cancelled', ({ threadId }) => {
+      const session = this.sessions.get(threadId);
+      if (!session) return;
+      session.blindReviewSessionId = null;
+    });
   }
 
   private getSession(threadId: number): SessionState {

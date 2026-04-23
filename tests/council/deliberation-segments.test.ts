@@ -87,4 +87,24 @@ describe('DeliberationHandler per-thread segments', () => {
     const { handler } = buildTestHandler();
     expect(() => handler.unsealCurrentSegment(T)).toThrow(/not sealed/i);
   });
+
+  // Round-8 codex finding [P2]: the per-thread blindReviewSessionId guard is
+  // only cleared on `blind-review.revealed`. /cancelreview never emitted
+  // anything, so the flag stuck non-null for the rest of the process and
+  // /councilreset kept refusing that thread forever. Listener parity with
+  // `revealed` fixes it: cancel also clears the guard.
+  it('blind-review.cancelled event clears blindReviewSessionId so /councilreset is no longer blocked', () => {
+    const { handler, bus } = buildTestHandler();
+    // Materialize the session first — started/cancelled listeners skip when
+    // the session isn't in the map yet.
+    handler.getBlindReviewSessionId(T);
+    bus.emit('blind-review.started', {
+      threadId: T,
+      codes: ['Agent-A', 'Agent-B'],
+      sessionId: 'br-session-xyz',
+    });
+    expect(handler.getBlindReviewSessionId(T)).toBe('br-session-xyz');
+    bus.emit('blind-review.cancelled', { threadId: T });
+    expect(handler.getBlindReviewSessionId(T)).toBeNull();
+  });
 });

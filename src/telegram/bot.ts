@@ -129,7 +129,11 @@ export function buildBlindReviewHandler(
   );
 }
 
-export function buildCancelReviewHandler(groupChatId: number, store: BlindReviewStore) {
+export function buildCancelReviewHandler(
+  groupChatId: number,
+  store: BlindReviewStore,
+  bus?: EventBus,
+) {
   return async (ctx: Context) => {
     if (ctx.chat?.id !== groupChatId) return;
     if (ctx.from?.is_bot) return;
@@ -140,6 +144,11 @@ export function buildCancelReviewHandler(groupChatId: number, store: BlindReview
       return;
     }
     store.delete(threadId);
+    // Round-8 codex finding [P2]: DeliberationHandler tracks an independent
+    // blindReviewSessionId on SessionState that /councilreset reads. Without
+    // this emit, the field stays non-null for the life of the process and
+    // /councilreset keeps refusing the thread forever after a cancel.
+    bus?.emit('blind-review.cancelled', { threadId });
     await ctx.reply('Blind-review session cancelled.');
   };
 }
@@ -330,24 +339,11 @@ export class BotManager {
     listenerBot.command('pvgcalibrated', buildPvgTestHandler(this.groupChatId, handler, 'calibrated'));
     listenerBot.command('pvgrotate', buildPvgRotateHandler(this.groupChatId, handler));
 
-    const defaultTextHandler = async (ctx: Context) => {
-      if (ctx.chat?.id !== this.groupChatId) return;
-      if (ctx.from?.is_bot) return;
-      if (!ctx.message) return;
-      const councilMsg = createCouncilMessageFromTelegram(ctx.message);
-      handler.handleHumanMessage(councilMsg);
-    };
-
-    if (critiqueUi) {
-      listenerBot.on('message:text', buildCritiqueTextHandler(
-        this.groupChatId,
-        critiqueUi.state,
-        defaultTextHandler,
-      ));
-    } else {
-      listenerBot.on('message:text', defaultTextHandler);
-    }
-
+    // Round-8 codex finding [P1]: grammY runs middleware in registration
+    // order and `on('message:text', ...)` consumes `/command` updates unless
+    // it calls `next()`. Register every command BEFORE the catch-all text
+    // handler so Telegram doesn't feed `/councilreset` / `/blindreview`
+    // into the deliberation as ordinary text.
     if (sessionReset) {
       listenerBot.command('councilreset', buildCouncilResetHandler(this.groupChatId, sessionReset));
       listenerBot.command('councilhistory', buildCouncilHistoryHandler(this.groupChatId, sessionReset.db));
@@ -355,7 +351,7 @@ export class BotManager {
 
     if (blindReview) {
       listenerBot.command('blindreview', buildBlindReviewHandler(this.groupChatId, handler));
-      listenerBot.command('cancelreview', buildCancelReviewHandler(this.groupChatId, blindReview.store));
+      listenerBot.command('cancelreview', buildCancelReviewHandler(this.groupChatId, blindReview.store, blindReview.bus));
       listenerBot.callbackQuery(/^br-score:([^:]+):(\d)$/, buildBlindReviewCallback(
         this.groupChatId,
         blindReview.store,
@@ -390,6 +386,26 @@ export class BotManager {
         CRITIQUE_CALLBACK_PATTERN,
         buildCritiqueCallback(this.groupChatId, critiqueUi.state, followUpSend),
       );
+    }
+
+    // Register the catch-all text handler LAST so all command handlers above
+    // get first crack at matching `/command` updates (round-8 codex finding).
+    const defaultTextHandler = async (ctx: Context) => {
+      if (ctx.chat?.id !== this.groupChatId) return;
+      if (ctx.from?.is_bot) return;
+      if (!ctx.message) return;
+      const councilMsg = createCouncilMessageFromTelegram(ctx.message);
+      handler.handleHumanMessage(councilMsg);
+    };
+
+    if (critiqueUi) {
+      listenerBot.on('message:text', buildCritiqueTextHandler(
+        this.groupChatId,
+        critiqueUi.state,
+        defaultTextHandler,
+      ));
+    } else {
+      listenerBot.on('message:text', defaultTextHandler);
     }
   }
 

@@ -49,6 +49,10 @@ The summary is surfaced to every agent on the next turn as the first `user`-role
 
 The end-to-end guarantee is asserted in `tests/integration/reset-flow.test.ts`: after a reset, both a stub Claude provider and a stub OpenAI provider receive the reset-summary text at `messages[0].content` on the next turn.
 
+## Multi-reset context carry-forward
+
+On the second and later `/councilreset` on a thread, `SessionReset` replays the most recent 3 prior snapshot summaries to the facilitator as a synthetic "Prior session segments" context block. Each snapshot already absorbs the decisions from its predecessors, so tail-3 gives the same semantic content as the full history without the O(n²) token cost of replaying every prior reset on every subsequent reset. Without this carry-forward the second reset silently dropped decisions from every earlier sealed segment — caught by round-8 `codex review` formal gate.
+
 ## Recovery
 
 The reset sequence is designed to leave no half-committed state.

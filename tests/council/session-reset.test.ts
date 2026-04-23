@@ -308,4 +308,101 @@ describe('SessionReset', () => {
       cause: expect.any(Error),
     });
   });
+
+  it('caps the prior-summaries block to the last N snapshots so a long-running thread does not blow the facilitator context', async () => {
+    // The carry-forward property means snapshot N already absorbs the
+    // decisions from N-1. Replaying every prior snapshot on every reset
+    // would grow O(n²) in cumulative tokens for no semantic gain. Verify
+    // the tail-cap at 3 by seeding 5 priors and asserting the facilitator
+    // sees segments 2-4 but not 0-1.
+    const db = new ResetSnapshotDB(':memory:');
+    for (let i = 0; i < 5; i++) {
+      db.recordSnapshot({
+        snapshotId: `prior-${i}`,
+        threadId: T,
+        segmentIndex: i,
+        sealedAt: `2026-04-2${i}T09:00:00Z`,
+        summaryMarkdown: [
+          '## Decisions',
+          `- segment-${i}-decision-marker`,
+          '',
+          '## Open Questions',
+          '',
+          '## Evidence Pointers',
+          '',
+          '## Blind-Review State',
+          'none',
+          '',
+        ].join('\n'),
+        metadata: { decisionsCount: 1, openQuestionsCount: 0, blindReviewSessionId: null },
+      });
+    }
+    const facilitator = makeFacilitator(VALID_SUMMARY);
+    const handler = makeHandler({
+      messages: [{ id: 'm', role: 'human', content: 'live turn', timestamp: 1 }],
+    });
+    const reset = new SessionReset(db, facilitator as never);
+
+    await reset.reset(handler as never, T);
+
+    const [messagesSent] = facilitator.respondDeterministic.mock.calls[0];
+    const allContent = messagesSent.map((m: { content: string }) => m.content).join('\n\n');
+    // Tail of 3 → segments 2, 3, 4 surface; 0 and 1 drop out.
+    expect(allContent).not.toContain('segment-0-decision-marker');
+    expect(allContent).not.toContain('segment-1-decision-marker');
+    expect(allContent).toContain('segment-2-decision-marker');
+    expect(allContent).toContain('segment-3-decision-marker');
+    expect(allContent).toContain('segment-4-decision-marker');
+  });
+
+  it('second reset includes prior snapshot summaries so decisions are preserved across segments (round-8 codex finding)', async () => {
+    // Round-8 codex finding [P1]: after the first reset, the previous segment
+    // survives only as a DB snapshot (not in current-segment messages). If
+    // SessionReset only feeds getCurrentSegmentMessages() to the facilitator,
+    // the second reset silently drops decisions/open questions from the
+    // earlier sealed segment — violating spec §6 carry-forward claim.
+    const db = new ResetSnapshotDB(':memory:');
+
+    // Seed a prior snapshot (as if /councilreset ran before).
+    const priorSummary = [
+      '## Decisions',
+      '- adopted rust for ingest pipeline',
+      '',
+      '## Open Questions',
+      '- retry backoff policy?',
+      '',
+      '## Evidence Pointers',
+      '- turn 3',
+      '',
+      '## Blind-Review State',
+      'none',
+      '',
+    ].join('\n');
+    db.recordSnapshot({
+      snapshotId: 'prior-snap',
+      threadId: T,
+      segmentIndex: 0,
+      sealedAt: '2026-04-23T09:00:00Z',
+      summaryMarkdown: priorSummary,
+      metadata: { decisionsCount: 1, openQuestionsCount: 1, blindReviewSessionId: null },
+    });
+
+    const facilitator = makeFacilitator(VALID_SUMMARY);
+    // Current segment only has a small new message (post-first-reset).
+    const handler = makeHandler({
+      messages: [{ id: 'm99', role: 'human', content: 'new debate topic', timestamp: 99 }],
+    });
+    const reset = new SessionReset(db, facilitator as never);
+
+    await reset.reset(handler as never, T);
+
+    expect(facilitator.respondDeterministic).toHaveBeenCalledTimes(1);
+    const [messagesSent] = facilitator.respondDeterministic.mock.calls[0];
+    // Concatenate every content the facilitator actually sees so the assertion
+    // doesn't care about prior-summary delivery shape (prepended summary msg,
+    // synthetic system msg, etc.) — just that the earlier decision is there.
+    const allContent = messagesSent.map((m: { content: string }) => m.content).join('\n\n');
+    expect(allContent).toContain('adopted rust for ingest pipeline');
+    expect(allContent).toContain('retry backoff policy?');
+  });
 });

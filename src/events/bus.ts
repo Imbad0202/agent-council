@@ -35,6 +35,7 @@ export interface EventMap {
   'blind-review.started': { threadId: number; codes: string[]; sessionId: string };
   'blind-review.scored': { threadId: number; code: string; score: number; allScored: boolean };
   'blind-review.revealed': { threadId: number };
+  'blind-review.cancelled': { threadId: number };
   'blind-review.persist-failed': { threadId: number; sessionId: string; error: Error };
   'pvg-rotate.persist-failed': { threadId: number; error: Error };
   'pvg-rotate.revealed': { threadId: number; correct: boolean };
