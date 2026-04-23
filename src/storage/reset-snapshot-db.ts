@@ -86,6 +86,14 @@ export class ResetSnapshotDB {
     return row ? rowToRecord(row) : null;
   }
 
+  // ORDER BY segment_index ASC is load-bearing:
+  //   - DeliberationHandler.getSnapshotPrefix() (round-9 post-restart fallback)
+  //     treats rows[rows.length - 1] as the newest snapshot
+  //   - SessionReset.reset() takes max(segment_index) + 1 for the next index
+  //     (round-6 restart-safe collision fix)
+  //   - SessionReset builds the prior-summaries block in chronological order
+  //     for the facilitator (round-8 multi-reset carry-forward)
+  // Don't remove the ORDER BY clause without fixing those call sites.
   listSnapshotsForThread(threadId: number): ResetSnapshot[] {
     const rows = this.db
       .prepare(

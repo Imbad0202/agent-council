@@ -41,6 +41,7 @@ When there are no resets yet, the reply is `No resets yet in this session.`
 
 - **Blind-review active.** `/councilreset` refuses to run while an unrevealed blind-review session is pending on the same thread. The reply names the commands that unblock you (`/blindreview reveal` or `/cancelreview`). No facilitator tokens are burned by a refused reset.
 - **Deliberation in flight.** `/councilreset` refuses while a council round is still running on the thread. Sealing mid-round would produce a snapshot that diverges from the transcript the agents actually wrote into the segment. Wait for the round to finish, then retry. The flag clears in `finally`, so a thrown agent or send error still unblocks future resets.
+- **New messages during a reset.** Symmetrically, `runDeliberation` refuses to start a round while a reset is already in flight on the thread. The incoming human message is dropped with a notice asking the user to resend after the reset confirmation lands. This keeps the snapshot generated before the seal consistent with the transcript that actually gets sealed (round-9 codex finding).
 - **Concurrent reset.** If a reset is already in flight on the thread, a second invocation is rejected with `A /councilreset is already in progress for thread N.` The in-flight flag clears on both success and failure so the thread does not get permanently stuck.
 
 ## Provider-agnostic carry-forward
@@ -48,6 +49,8 @@ When there are no resets yet, the reply is `No resets yet in this session.`
 The summary is surfaced to every agent on the next turn as the first `user`-role message in the conversation history. This works uniformly for Claude, OpenAI, and Gemini peers — the snapshot rides the regular `ProviderMessage[]` transformation, not Anthropic's `systemPromptParts` cache marker. That means every post-reset turn re-pays the snapshot tokens as input. A Claude-only cache optimisation that reuses `systemPromptParts` for the snapshot is scheduled for v0.5.2.
 
 The end-to-end guarantee is asserted in `tests/integration/reset-flow.test.ts`: after a reset, both a stub Claude provider and a stub OpenAI provider receive the reset-summary text at `messages[0].content` on the next turn.
+
+Carry-forward also survives a process restart. `DeliberationHandler.getSnapshotPrefix` first walks the in-memory `segments[]` for a snapshotId, and if nothing is found (typical fresh-process state) falls back to `ResetSnapshotDB.listSnapshotsForThread(threadId)` and returns the most-recent snapshot's `summaryMarkdown`. Round-9 codex finding — before this fallback, any process restart between `/councilreset` and the next user turn silently dropped the context the feature is meant to preserve.
 
 ## Multi-reset context carry-forward
 

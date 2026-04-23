@@ -359,4 +359,48 @@ describe('DeliberationHandler — blind-review turn recording', () => {
     expect(store.getLatestTurnFor(threadId, 'agent-a')).toBeNull();
     expect(store.getLatestTurnFor(threadId, 'agent-b')).toBeNull();
   });
+
+  // Round-9 codex finding [P1]: round-7 added "reset refuses during
+  // deliberation" but NOT the symmetric "deliberation refuses during reset".
+  // If a user sends a message while /councilreset is waiting on the
+  // facilitator summary call, runDeliberation would happily push it into the
+  // current segment and the subsequent sealCurrentSegment would persist a
+  // snapshot that no longer matches the sealed transcript.
+  it('skips deliberation and notifies the user when a reset is in flight', async () => {
+    const bus = new EventBus();
+    const workers = [makeWorker('agent-a', 'Agent A'), makeWorker('agent-b', 'Agent B')];
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+    const handler = new DeliberationHandler(bus, workers, minConfig, sendFn);
+
+    const threadId = 7;
+    // Materialize the session, then flag reset-in-flight to simulate an
+    // in-progress /councilreset waiting on the facilitator.
+    handler.isResetInFlight(threadId);
+    handler.setResetInFlight(threadId, true);
+
+    const agentResponded: EventMap['agent.responded'][] = [];
+    bus.on('agent.responded', (payload) => agentResponded.push(payload));
+
+    const message = makeMessage('user message during reset', threadId);
+
+    // Give the handler a moment to run and emit. Don't wait on
+    // deliberation.ended — the whole point is it should NOT fire.
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'medium',
+      threadId,
+      message,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(agentResponded).toHaveLength(0);
+    for (const w of workers) {
+      expect(w.respond).not.toHaveBeenCalled();
+    }
+    // User gets a clear reply that the message was skipped.
+    const replies = sendFn.mock.calls.map((call) => String(call[1] ?? ''));
+    expect(replies.some((r) => /reset/i.test(r))).toBe(true);
+    // Current segment should NOT contain the dropped message.
+    expect(handler.getCurrentSegmentMessages(threadId)).toHaveLength(0);
+  });
 });

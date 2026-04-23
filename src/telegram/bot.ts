@@ -1,5 +1,5 @@
 import { Bot, Context, InlineKeyboard } from 'grammy';
-import { createCouncilMessageFromTelegram } from './handlers.js';
+import { createCouncilMessageFromTelegram, resolveTelegramThreadId } from './handlers.js';
 import type { AgentConfig, CouncilMessage } from '../types.js';
 import { BlindReviewStore, formatRevealMessage } from '../council/blind-review.js';
 import type { BlindReviewDB } from '../council/blind-review-db.js';
@@ -137,7 +137,7 @@ export function buildCancelReviewHandler(
   return async (ctx: Context) => {
     if (ctx.chat?.id !== groupChatId) return;
     if (ctx.from?.is_bot) return;
-    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const threadId = resolveTelegramThreadId(ctx.message);
     const session = store.get(threadId);
     if (!session) {
       await ctx.reply('No blind-review session in progress for this thread.');
@@ -157,7 +157,7 @@ export function buildCouncilResetHandler(groupChatId: number, wiring: SessionRes
   return async (ctx: Context) => {
     if (ctx.chat?.id !== groupChatId) return;
     if (ctx.from?.is_bot) return;
-    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const threadId = resolveTelegramThreadId(ctx.message);
     try {
       const result = await wiring.reset.reset(wiring.deliberationHandler, threadId);
       await ctx.reply(
@@ -173,7 +173,7 @@ export function buildCouncilHistoryHandler(groupChatId: number, db: ResetSnapsho
   return async (ctx: Context) => {
     if (ctx.chat?.id !== groupChatId) return;
     if (ctx.from?.is_bot) return;
-    const threadId = ctx.message?.message_thread_id ?? ctx.chat.id;
+    const threadId = resolveTelegramThreadId(ctx.message);
     const snapshots = db.listSnapshotsForThread(threadId);
     if (snapshots.length === 0) {
       await ctx.reply('No resets yet in this session.');

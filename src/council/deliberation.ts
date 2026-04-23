@@ -261,10 +261,16 @@ export class DeliberationHandler {
 
   // Returns the most recent reset-snapshot summary for this thread, or null
   // if no prior /councilreset has happened (or resetSnapshotDB is not wired).
-  // Live segment state is the source of truth for which snapshot is current —
-  // the DB is only used to dereference the id. If SessionReset rolls back a
-  // failed seal/open by deleting the snapshot row, getSnapshot() returns null
-  // and we fall through to the next older sealed segment.
+  // Live segment state is preferred source of truth for which snapshot is
+  // current — the DB is used to dereference the id. If SessionReset rolls
+  // back a failed seal/open by deleting the snapshot row, getSnapshot()
+  // returns null and we fall through to the next older sealed segment.
+  //
+  // Round-9 codex finding [P2]: after a process restart the in-memory
+  // session rebuilds with a fresh open segment (snapshotId null), so the
+  // in-memory walk misses the snapshot row that still lives in SQLite.
+  // Fall back to the DB's most recent snapshot for this thread so the
+  // carry-forward feature survives restart — which is the whole point.
   public getSnapshotPrefix(threadId: number): string | null {
     if (!this.resetSnapshotDB) return null;
     const session = this.getSession(threadId);
@@ -273,6 +279,12 @@ export class DeliberationHandler {
       if (!snapshotId) continue;
       const snap = this.resetSnapshotDB.getSnapshot(snapshotId);
       if (snap) return snap.summaryMarkdown;
+    }
+    // Post-restart DB fallback: listSnapshotsForThread returns rows ordered
+    // by segment_index ASC, so the last element is the most recent snapshot.
+    const rows = this.resetSnapshotDB.listSnapshotsForThread(threadId);
+    if (rows.length > 0) {
+      return rows[rows.length - 1].summaryMarkdown;
     }
     return null;
   }
@@ -345,6 +357,26 @@ export class DeliberationHandler {
     complexity: Complexity,
   ): Promise<void> {
     const session = this.getSession(threadId);
+
+    // Round-9 codex finding [P1]: round-7 only added the "reset refuses
+    // during deliberation" direction. Without this symmetric guard, a
+    // human message arriving while /councilreset is waiting on the
+    // facilitator summary would be pushed into the segment that's about
+    // to be sealed, so the persisted snapshot diverges from the sealed
+    // transcript. Drop the message with a user-facing notice instead of
+    // queuing — the new segment opens right after the reset finishes
+    // and the user can retype.
+    if (session.resetInFlight) {
+      // Hardcode 'facilitator' (not workers[0].id) — this is a system notice,
+      // not a response from any specific agent. Matches the convention used
+      // for facilitator.intervened / facilitator summary messages.
+      await this.sendFn(
+        'facilitator',
+        '⏳ /councilreset is in progress on this thread. Your message was not picked up — please resend once the reset confirmation lands.',
+        threadId,
+      );
+      return;
+    }
 
     // Mark deliberation in-flight so SessionReset can refuse to seal a
     // segment that is still growing. Agent responses are pushed into

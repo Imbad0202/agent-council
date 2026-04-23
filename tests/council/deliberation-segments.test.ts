@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildTestHandler } from '../helpers/deliberation-factory.js';
+import { DeliberationHandler } from '../../src/council/deliberation.js';
+import { EventBus } from '../../src/events/bus.js';
+import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
+import { makeWorker, minConfig } from './helpers.js';
 import type { CouncilMessage } from '../../src/types.js';
 
 const T = 42;
@@ -93,6 +97,48 @@ describe('DeliberationHandler per-thread segments', () => {
   // anything, so the flag stuck non-null for the rest of the process and
   // /councilreset kept refusing that thread forever. Listener parity with
   // `revealed` fixes it: cancel also clears the guard.
+  // Round-9 codex finding [P2]: getSnapshotPrefix walked only in-memory
+  // segments[]. After a process restart, the session rebuilds with a fresh
+  // open segment whose snapshotId is null, so the first post-restart turn
+  // on a previously reset thread got no carry-forward — even though the
+  // snapshot row still lives in SQLite. Simulate restart by creating a
+  // fresh DeliberationHandler that shares the same DB but has no in-memory
+  // segment snapshotIds, and assert getSnapshotPrefix falls back to DB.
+  it('getSnapshotPrefix falls back to the latest DB snapshot after a process restart', () => {
+    const db = new ResetSnapshotDB(':memory:');
+    // Pre-populate as if a /councilreset ran in a previous process.
+    const priorSummary = [
+      '## Decisions',
+      '- ship rust',
+      '',
+      '## Open Questions',
+      '',
+      '## Evidence Pointers',
+      '',
+      '## Blind-Review State',
+      'none',
+      '',
+    ].join('\n');
+    db.recordSnapshot({
+      snapshotId: 'prior-reset',
+      threadId: T,
+      segmentIndex: 0,
+      sealedAt: '2026-04-22T09:00:00Z',
+      summaryMarkdown: priorSummary,
+      metadata: { decisionsCount: 1, openQuestionsCount: 0, blindReviewSessionId: null },
+    });
+
+    // Fresh handler — in-memory session has no snapshotIds.
+    const bus = new EventBus();
+    const workers = [makeWorker('agent-a', 'Agent A')];
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+    const handler = new DeliberationHandler(bus, workers, minConfig, sendFn, {
+      resetSnapshotDB: db,
+    });
+
+    expect(handler.getSnapshotPrefix(T)).toBe(priorSummary);
+  });
+
   it('blind-review.cancelled event clears blindReviewSessionId so /councilreset is no longer blocked', () => {
     const { handler, bus } = buildTestHandler();
     // Materialize the session first — started/cancelled listeners skip when

@@ -152,7 +152,13 @@ describe('/councilreset Telegram', () => {
     expect(ctx.reply).not.toHaveBeenCalled();
   });
 
-  it('falls back to chat.id when message_thread_id is absent', async () => {
+  // Round-9 codex finding [P1]: non-forum (no topics) Telegram chats set
+  // message_thread_id = undefined, and normal user messages get normalized
+  // to threadId = 0 by GatewayRouter. Command handlers used to fall back to
+  // `ctx.chat.id` which meant /councilreset summarized the WRONG thread key
+  // in every non-forum group — always empty, because the actual deliberation
+  // lived under threadId 0.
+  it('normalizes missing message_thread_id to 0 (matches GatewayRouter), not chat.id', async () => {
     const db = trackDb(new ResetSnapshotDB(':memory:'));
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const reset = new SessionReset(db, facilitator as never);
@@ -166,7 +172,8 @@ describe('/councilreset Telegram', () => {
     const ctx = makeCtx(GROUP, 'none');
     await fn(ctx as never);
 
-    expect(delib.sealCurrentSegment).toHaveBeenCalledWith(GROUP, expect.any(String));
+    expect(delib.sealCurrentSegment).toHaveBeenCalledWith(0, expect.any(String));
+    expect(delib.sealCurrentSegment).not.toHaveBeenCalledWith(GROUP, expect.any(String));
   });
 });
 

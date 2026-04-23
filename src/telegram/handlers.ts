@@ -34,3 +34,14 @@ export function createCouncilMessageFromTelegram(
 export function formatAgentReply(agentId: string, agentName: string, content: string): string {
   return `🤖 ${agentName}\n\n${content}`;
 }
+
+// Match the threadId normalization that GatewayRouter.handleHumanMessage does
+// for ordinary text messages: undefined (non-forum chat, no topic) maps to 0,
+// NOT to ctx.chat.id. Command handlers must use this so /councilreset,
+// /councilhistory, and /cancelreview land on the same thread key as the
+// deliberation they are acting on (round-9 codex finding).
+export function resolveTelegramThreadId(
+  ctxMessage: { message_thread_id?: number } | undefined,
+): number {
+  return ctxMessage?.message_thread_id ?? 0;
+}
