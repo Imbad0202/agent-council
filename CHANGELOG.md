@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+**Session reset (v0.5.1)** — Anthropic *Harness Design for Long-Running Applications* (2026-04). The `/councilreset` primitive lets users seal the current deliberation segment, persist a structured summary, and start a new segment. Prior turns remain readable via `/councilhistory` but are no longer sent to agents.
+
+- `/councilreset` (CLI + Telegram) — facilitator produces a structured markdown summary (`## Decisions`, `## Open Questions`, `## Evidence Pointers`, `## Blind-Review State`), persists it via `ResetSnapshotDB`, seals the current segment, and opens a new one. Guarded against concurrent invocation and against running while a blind-review session is pending.
+- `/councilhistory` (CLI + Telegram) — lists all reset points for the active thread with sealed-at timestamps and metadata counts.
+- Provider-agnostic snapshot carry-forward — the snapshot surfaces on the next turn as the first user-role message in `conversationHistory`, working uniformly for Claude, OpenAI, and Gemini peers. Verified end-to-end in `tests/integration/reset-flow.test.ts`.
+- `AgentWorker.respond()` gains an optional `snapshotPrefix?: string` sixth parameter that prepends the summary as a synthetic first user message.
+- `AgentWorker.respondDeterministic()` — `temperature: 0` variant used for reset summaries (stats bookkeeping matches `respond()` so facilitator costs surface in `stats.modelUsage`).
+- `DeliberationHandler.SessionState` now tracks `segments: HistorySegment[]` instead of a flat `conversationHistory: CouncilMessage[]`. Public per-thread accessors: `getSegments`, `getCurrentSegmentMessages`, `sealCurrentSegment`, `openNewSegment`, `unsealCurrentSegment`, `getSnapshotPrefix`, `getBlindReviewSessionId`, `getCurrentTopic`, `setResetInFlight`, `isResetInFlight`.
+- `SessionReset` orchestrator (`src/council/session-reset.ts`) with nested rollback: DB-write failure leaves no mutation; seal failure rolls back the DB row; open failure unseals in memory and rolls back the DB row. Cleanup failures attach as `Error.cause` on the original lifecycle error.
+- Named errors: `BlindReviewActiveError`, `ResetInProgressError` — adapters branch on refusal types via `instanceof` instead of regex-matching messages.
+- `EventMap['deliberation.started']` gains `topic: string`; `EventMap['blind-review.started']` gains `sessionId: string`.
+- `HistorySegment.messages` is `readonly` at the type level; the handler's private `currentMessages()` helper is the single mutation boundary.
+
+### Changed
+
+- `src/index.ts` wires `ResetSnapshotDB` + `SessionReset` at startup, passes `resetSnapshotDB` into `DeliberationHandler`, and feature-detects `setSessionResetWiring` on the adapter (narrow `SessionResetAdapter` interface, same pattern as `CritiqueUiAdapter`).
+- CLI main loop now dispatches slash commands via `routeCliInput` before the deliberation router, so `/councilreset` and `/councilhistory` work on CLI as well as Telegram.
+- `memoryDb` is reused between the Memory layer and `CliCommandHandler` instead of opening a second SQLite connection.
+
+### Deferred to v0.5.2
+
+- Claude-only cached `systemPromptParts` fast path for snapshot — v0.5.1 ships the provider-agnostic prepend only and re-pays the snapshot tokens on every post-reset turn.
+- `ContextUsageTracker` + 80% passive context-usage hint (requires Anthropic Models API `max_input_tokens`).
+- `ProviderResponse.tokensUsed.cacheCreationInput` / `.cacheReadInput` instrumentation — needed to *verify* cache-hit; v0.5.1 ships the feature without that metric.
+- Durable `HistorySegment.messages` across process restart — snapshots survive, in-memory segments do not.
+- `/councilcontract` sprint contract command.
+
 ## [0.5.0] - 2026-04-23
 
 ### Added

@@ -297,6 +297,26 @@ To abandon a pending session, use `/cancelreview`.
 
 Note: anonymous broadcast routes all agent messages through a single sender bot, so per-agent bot identities (avatars, names) are uniform during a blind round — that's the point.
 
+## Long-running sessions
+
+Past ~100 turns, agent responses drift. Prompt caching keeps token cost down but does not fix coherence. `/councilreset` produces a structured summary of the current segment (decisions, open questions, evidence pointers, blind-review state), persists it, and starts a new segment — subsequent turns resume with the summary as shared context instead of the full prior transcript.
+
+```
+/councilreset
+```
+
+Works on CLI and Telegram. The reply names the sealed segment index and the decision + open-question counts.
+
+`/councilhistory` lists every reset point for the current thread:
+
+```
+[0] 2026-04-23T09:00:00Z — 3 decisions, 1 open
+```
+
+The snapshot is surfaced to every agent on the next turn as the first user-role message, so Claude, OpenAI, and Gemini peers see it uniformly.
+
+See [docs/LONG_RUNNING_COUNCIL.md](docs/LONG_RUNNING_COUNCIL.md) for guards, recovery semantics, and the cache trade-off (Claude-only `systemPromptParts` cache for the snapshot is deferred to v0.5.2).
+
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
