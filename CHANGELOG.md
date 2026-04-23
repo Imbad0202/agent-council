@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-23
+
 ### Added
 
 **Session reset (v0.5.1)** — Anthropic *Harness Design for Long-Running Applications* (2026-04). The `/councilreset` primitive lets users seal the current deliberation segment, persist a structured summary, and start a new segment. Prior turns remain readable via `/councilhistory` but are no longer sent to agents.
