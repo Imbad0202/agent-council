@@ -58,7 +58,6 @@ interface SessionState {
   critiqueLog: CritiqueSessionLog;
   blindReviewSessionId: string | null;
   currentTopic: string;
-  resetInFlight: boolean;
 }
 
 export class DeliberationHandler {
@@ -186,22 +185,25 @@ export class DeliberationHandler {
         critiqueLog: { agentTurns: 0, humanCritiques: [], stanceShiftsInducedByHuman: 0 },
         blindReviewSessionId: null,
         currentTopic: '',
-        resetInFlight: false,
       });
     }
     return this.sessions.get(threadId)!;
   }
 
+  // Internal write path. External readers use getCurrentSegmentMessages which
+  // returns the readonly view declared on HistorySegment. The cast is the
+  // single mutation boundary — keep it here.
   private currentMessages(session: SessionState): CouncilMessage[] {
-    return session.segments[session.segments.length - 1].messages;
+    return session.segments[session.segments.length - 1].messages as CouncilMessage[];
   }
 
   public getSegments(threadId: number): readonly Readonly<HistorySegment>[] {
     return this.getSession(threadId).segments;
   }
 
-  public getCurrentSegmentMessages(threadId: number): CouncilMessage[] {
-    return this.currentMessages(this.getSession(threadId));
+  public getCurrentSegmentMessages(threadId: number): readonly CouncilMessage[] {
+    const segs = this.getSession(threadId).segments;
+    return segs[segs.length - 1].messages;
   }
 
   public sealCurrentSegment(threadId: number, snapshotId: string): void {
@@ -230,10 +232,20 @@ export class DeliberationHandler {
 
   // Returns the most recent reset-snapshot summary for this thread, or null
   // if no prior /councilreset has happened (or resetSnapshotDB is not wired).
+  // Live segment state is the source of truth for which snapshot is current —
+  // the DB is only used to dereference the id. If SessionReset rolls back a
+  // failed seal/open by deleting the snapshot row, getSnapshot() returns null
+  // and we fall through to the next older sealed segment.
   public getSnapshotPrefix(threadId: number): string | null {
     if (!this.resetSnapshotDB) return null;
-    const snaps = this.resetSnapshotDB.listSnapshotsForThread(threadId);
-    return snaps.at(-1)?.summaryMarkdown ?? null;
+    const session = this.getSession(threadId);
+    for (let i = session.segments.length - 1; i >= 0; i--) {
+      const snapshotId = session.segments[i].snapshotId;
+      if (!snapshotId) continue;
+      const snap = this.resetSnapshotDB.getSnapshot(snapshotId);
+      if (snap) return snap.summaryMarkdown;
+    }
+    return null;
   }
 
   public getBlindReviewSessionId(threadId: number): string | null {
@@ -242,14 +254,6 @@ export class DeliberationHandler {
 
   public getCurrentTopic(threadId: number): string {
     return this.getSession(threadId).currentTopic;
-  }
-
-  public setResetInFlight(threadId: number, v: boolean): void {
-    this.getSession(threadId).resetInFlight = v;
-  }
-
-  public isResetInFlight(threadId: number): boolean {
-    return this.getSession(threadId).resetInFlight;
   }
 
   // Test-only: lets deliberation-segments.test.ts exercise segment lifecycle

@@ -251,7 +251,10 @@ export interface ExecutionTask {
 export interface HistorySegment {
   startedAt: string;
   endedAt: string | null;
-  messages: CouncilMessage[];
+  // External readers see this as readonly so mutation only flows through
+  // DeliberationHandler's public lifecycle methods. The handler casts
+  // internally when it needs to push.
+  messages: readonly CouncilMessage[];
   snapshotId: string | null;
 }
 
