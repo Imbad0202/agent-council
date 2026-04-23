@@ -40,6 +40,7 @@ When there are no resets yet, the reply is `No resets yet in this session.`
 ## Guards
 
 - **Blind-review active.** `/councilreset` refuses to run while an unrevealed blind-review session is pending on the same thread. The reply names the commands that unblock you (`/blindreview reveal` or `/cancelreview`). No facilitator tokens are burned by a refused reset.
+- **Deliberation in flight.** `/councilreset` refuses while a council round is still running on the thread. Sealing mid-round would produce a snapshot that diverges from the transcript the agents actually wrote into the segment. Wait for the round to finish, then retry. The flag clears in `finally`, so a thrown agent or send error still unblocks future resets.
 - **Concurrent reset.** If a reset is already in flight on the thread, a second invocation is rejected with `A /councilreset is already in progress for thread N.` The in-flight flag clears on both success and failure so the thread does not get permanently stuck.
 
 ## Provider-agnostic carry-forward

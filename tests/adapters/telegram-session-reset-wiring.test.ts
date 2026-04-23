@@ -59,6 +59,7 @@ function makeDelibHandler() {
     getCurrentSegmentMessages: vi.fn(() => [] as readonly unknown[]),
     getSegments: vi.fn(() => [{ snapshotId: null }]),
     isResetInFlight: vi.fn(() => false),
+    isDeliberationInFlight: vi.fn(() => false),
     setResetInFlight: vi.fn(),
     sealCurrentSegment: vi.fn(),
     openNewSegment: vi.fn(),

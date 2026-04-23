@@ -12,6 +12,7 @@ const THREAD = 555;
 function makeDelibHandler(overrides: Partial<{
   blindReviewSessionId: string | null;
   resetInFlight: boolean;
+  deliberationInFlight: boolean;
 }> = {}) {
   return {
     getBlindReviewSessionId: vi.fn(() => overrides.blindReviewSessionId ?? null),
@@ -19,6 +20,7 @@ function makeDelibHandler(overrides: Partial<{
     getCurrentSegmentMessages: vi.fn(() => [] as readonly unknown[]),
     getSegments: vi.fn(() => [{ snapshotId: null }]),
     isResetInFlight: vi.fn(() => overrides.resetInFlight ?? false),
+    isDeliberationInFlight: vi.fn(() => overrides.deliberationInFlight ?? false),
     setResetInFlight: vi.fn(),
     sealCurrentSegment: vi.fn(),
     openNewSegment: vi.fn(),

@@ -14,3 +14,13 @@ export class ResetInProgressError extends Error {
     this.name = 'ResetInProgressError';
   }
 }
+
+export class DeliberationInProgressError extends Error {
+  constructor(threadId: number) {
+    super(
+      `A council deliberation is still in progress for thread ${threadId}. ` +
+        `Wait for the current round to finish before running /councilreset.`,
+    );
+    this.name = 'DeliberationInProgressError';
+  }
+}

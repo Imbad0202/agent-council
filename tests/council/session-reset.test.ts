@@ -3,6 +3,7 @@ import { SessionReset } from '../../src/council/session-reset.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
 import {
   BlindReviewActiveError,
+  DeliberationInProgressError,
   ResetInProgressError,
 } from '../../src/council/session-reset-errors.js';
 import type { CouncilMessage } from '../../src/types.js';
@@ -30,6 +31,7 @@ function makeHandler(init: {
   blindReviewSessionId?: string | null;
   topic?: string;
   resetInFlight?: boolean;
+  deliberationInFlight?: boolean;
 } = {}) {
   const segments: MutableSegment[] = [
     {
@@ -40,6 +42,7 @@ function makeHandler(init: {
     },
   ];
   let resetInFlight = init.resetInFlight ?? false;
+  const deliberationInFlight = init.deliberationInFlight ?? false;
   return {
     getCurrentSegmentMessages: vi.fn<
       [number],
@@ -49,6 +52,7 @@ function makeHandler(init: {
     getBlindReviewSessionId: vi.fn(() => init.blindReviewSessionId ?? null),
     getCurrentTopic: vi.fn(() => init.topic ?? 'rust vs go'),
     isResetInFlight: vi.fn(() => resetInFlight),
+    isDeliberationInFlight: vi.fn(() => deliberationInFlight),
     setResetInFlight: vi.fn((_: number, v: boolean) => {
       resetInFlight = v;
     }),
@@ -210,6 +214,24 @@ describe('SessionReset', () => {
 
     await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(ResetInProgressError);
     expect(facilitator.respondDeterministic).not.toHaveBeenCalled();
+  });
+
+  it('throws DeliberationInProgressError if deliberation in flight; no facilitator call, no DB write, no mutation', async () => {
+    // Round-7 finding: without this guard, a /councilreset call that lands
+    // mid-deliberation would seal a segment whose transcript is still
+    // growing, producing a snapshot that diverges from the sealed content.
+    const db = new ResetSnapshotDB(':memory:');
+    const facilitator = makeFacilitator(VALID_SUMMARY);
+    const handler = makeHandler({ deliberationInFlight: true });
+    const reset = new SessionReset(db, facilitator as never);
+
+    await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(
+      DeliberationInProgressError,
+    );
+    expect(facilitator.respondDeterministic).not.toHaveBeenCalled();
+    expect(handler.sealCurrentSegment).not.toHaveBeenCalled();
+    expect(handler.openNewSegment).not.toHaveBeenCalled();
+    expect(db.listSnapshotsForThread(T)).toHaveLength(0);
   });
 
   it('sets reset-in-flight before facilitator call and clears it on success', async () => {

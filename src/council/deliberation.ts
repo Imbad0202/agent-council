@@ -59,6 +59,10 @@ interface SessionState {
   blindReviewSessionId: string | null;
   currentTopic: string;
   resetInFlight: boolean;
+  // True while runDeliberation is mid-flight for this thread. SessionReset
+  // checks this before sealing so a reset can't snapshot one transcript and
+  // seal a later one — see round-7 audit finding.
+  deliberationInFlight: boolean;
 }
 
 export class DeliberationHandler {
@@ -187,6 +191,7 @@ export class DeliberationHandler {
         blindReviewSessionId: null,
         currentTopic: '',
         resetInFlight: false,
+        deliberationInFlight: false,
       });
     }
     return this.sessions.get(threadId)!;
@@ -279,6 +284,10 @@ export class DeliberationHandler {
     return this.getSession(threadId).resetInFlight;
   }
 
+  public isDeliberationInFlight(threadId: number): boolean {
+    return this.getSession(threadId).deliberationInFlight;
+  }
+
   // Test-only: lets deliberation-segments.test.ts exercise segment lifecycle
   // without running a full runDeliberation round. Production callers push via
   // the private currentMessages() helper inside runDeliberation.
@@ -328,6 +337,16 @@ export class DeliberationHandler {
   ): Promise<void> {
     const session = this.getSession(threadId);
 
+    // Mark deliberation in-flight so SessionReset can refuse to seal a
+    // segment that is still growing. Agent responses are pushed into
+    // currentMessages mid-round (see the agent turn loop below) and
+    // facilitator.intervened events can push async, so the flag must
+    // cover the entire method. Cleared in the finally at the end so a
+    // thrown agent / send error still releases it and unblocks future
+    // /councilreset calls.
+    session.deliberationInFlight = true;
+
+    try {
     // Reset per-round critique stats. Segment messages are retained across
     // rounds for context continuity, but collaboration-depth metrics are
     // scoped to THIS round — a user asking a follow-up shouldn't inherit last
@@ -661,6 +680,9 @@ export class DeliberationHandler {
       intent,
       collaborationScore,
     });
+    } finally {
+      session.deliberationInFlight = false;
+    }
   }
 }
 

@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type { CouncilMessage, ResetSnapshot } from '../types.js';
 import { buildResetSummaryPrompt, parseSummaryMetadata } from './session-reset-prompts.js';
-import { BlindReviewActiveError, ResetInProgressError } from './session-reset-errors.js';
+import {
+  BlindReviewActiveError,
+  DeliberationInProgressError,
+  ResetInProgressError,
+} from './session-reset-errors.js';
 
 export interface HandlerForReset {
   getCurrentSegmentMessages(threadId: number): readonly CouncilMessage[];
@@ -10,6 +14,7 @@ export interface HandlerForReset {
   getBlindReviewSessionId(threadId: number): string | null;
   getCurrentTopic(threadId: number): string;
   isResetInFlight(threadId: number): boolean;
+  isDeliberationInFlight(threadId: number): boolean;
   setResetInFlight(threadId: number, v: boolean): void;
   sealCurrentSegment(threadId: number, snapshotId: string): void;
   openNewSegment(threadId: number): void;
@@ -39,6 +44,15 @@ export class SessionReset {
   async reset(handler: HandlerForReset, threadId: number): Promise<ResetResult> {
     if (handler.getBlindReviewSessionId(threadId) !== null) {
       throw new BlindReviewActiveError();
+    }
+
+    // Asymmetric concurrency guard (round-7 audit): a deliberation round
+    // can still push agent turns into the current segment between the
+    // facilitator summary call and the seal. Refusing the reset here lets
+    // the in-flight round finish and keeps the snapshot consistent with
+    // what actually lands in the sealed segment.
+    if (handler.isDeliberationInFlight(threadId)) {
+      throw new DeliberationInProgressError(threadId);
     }
 
     if (handler.isResetInFlight(threadId)) {
