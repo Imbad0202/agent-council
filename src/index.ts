@@ -230,11 +230,24 @@ async function main() {
 
   // Wire /councilreset + /councilhistory into the listener bot (Telegram
   // only; adapters without setSessionResetWiring silently skip).
-  if (sessionReset && hasSetSessionResetWiring(adapter)) {
+  //
+  // Round-15 codex finding [P2]: previously this whole block was gated on
+  // `sessionReset`, which requires a facilitator agent. Deployments without
+  // a facilitator had `sessionReset === undefined` AND the adapter never
+  // saw the snapshot DB, so the listener bot didn't register /councilreset
+  // or /councilhistory at all — typing them fell through to the catch-all
+  // text handler and started a deliberation round. Now we always pass the
+  // DB when the adapter supports session-reset wiring; reset /
+  // deliberationHandler are only included when facilitator is configured.
+  // The command handlers in telegram/bot.ts branch on those optional
+  // fields: /councilhistory is fully functional (DB-only dependency) and
+  // /councilreset replies "not configured" if facilitator is missing.
+  if (hasSetSessionResetWiring(adapter)) {
     adapter.setSessionResetWiring({
-      reset: sessionReset,
-      deliberationHandler,
       db: resetSnapshotDB,
+      ...(sessionReset
+        ? { reset: sessionReset, deliberationHandler }
+        : {}),
     });
   }
 

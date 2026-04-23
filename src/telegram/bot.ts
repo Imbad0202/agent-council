@@ -42,10 +42,17 @@ export interface CritiqueUiWiring {
   sendFn?: (agentId: string, content: string, threadId?: number) => Promise<void>;
 }
 
+// Round-15 codex finding [P2]: /councilhistory only needs the snapshot DB;
+// /councilreset needs reset + deliberationHandler + facilitator. Deployments
+// that skip the facilitator agent should still register /councilhistory
+// (read-only, no facilitator tokens) and should still see a "not configured"
+// reply for /councilreset instead of having the command fall through to the
+// catch-all text handler (which would start a full deliberation round —
+// token burn + wrong behaviour).
 export interface SessionResetWiring {
-  reset: SessionReset;
-  deliberationHandler: HandlerForReset;
   db: ResetSnapshotDB;
+  reset?: SessionReset;
+  deliberationHandler?: HandlerForReset;
 }
 
 type CommandFlag =
@@ -157,6 +164,14 @@ export function buildCouncilResetHandler(groupChatId: number, wiring: SessionRes
   return async (ctx: Context) => {
     if (ctx.chat?.id !== groupChatId) return;
     if (ctx.from?.is_bot) return;
+    // Round-15 codex finding [P2]: if the deployment omitted the facilitator
+    // agent, reset/deliberationHandler are undefined. Reply instead of
+    // falling through to the catch-all text handler (which would start a
+    // deliberation round on the literal "/councilreset" string).
+    if (!wiring.reset || !wiring.deliberationHandler) {
+      await ctx.reply('/councilreset is not configured (no facilitator agent wired).');
+      return;
+    }
     const threadId = resolveTelegramThreadId(ctx.message);
     try {
       const result = await wiring.reset.reset(wiring.deliberationHandler, threadId);

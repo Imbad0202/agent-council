@@ -110,6 +110,63 @@ describe('TelegramAdapter session-reset wiring', () => {
     await adapter.stop();
   });
 
+  // Round-15 codex finding [P2]: a deployment without a facilitator agent
+  // leaves sessionReset === undefined but resetSnapshotDB is still created.
+  // The old gate skipped BOTH /councilreset and /councilhistory registration
+  // in that case; the catch-all message:text handler then treated typing
+  // either command as a normal human message and started a full
+  // deliberation round — wasted tokens AND user-visible wrong behaviour.
+  // Fix: register the commands whenever the DB wiring is present; /councilreset
+  // replies "not configured" if reset/deliberationHandler are missing, and
+  // /councilhistory works fully (DB-only dependency).
+  it('registers both commands with DB-only wiring (no facilitator, no SessionReset)', async () => {
+    const adapter = new TelegramAdapter(config);
+    const db = new ResetSnapshotDB(':memory:');
+
+    // DB-only wiring: reset + deliberationHandler omitted to simulate
+    // a deployment where facilitator wasn't configured.
+    adapter.setSessionResetWiring({ db });
+
+    await adapter.start(() => {});
+
+    const commandNames = mockBot.command.mock.calls.map((call) => call[0]);
+    expect(commandNames).toContain('councilreset');
+    expect(commandNames).toContain('councilhistory');
+
+    await adapter.stop();
+    db.close();
+  });
+
+  it('/councilreset replies "not configured" when reset/deliberationHandler are missing', async () => {
+    const adapter = new TelegramAdapter(config);
+    const db = new ResetSnapshotDB(':memory:');
+    adapter.setSessionResetWiring({ db });
+
+    const handlers = new Map<string, (ctx: unknown) => Promise<void>>();
+    mockBot.command.mockImplementation((name: string, handler: (ctx: unknown) => Promise<void>) => {
+      handlers.set(name, handler);
+    });
+
+    await adapter.start(() => {});
+
+    const councilResetHandler = handlers.get('councilreset');
+    expect(councilResetHandler).toBeDefined();
+
+    const ctx = {
+      chat: { id: -100123456789 },
+      from: { is_bot: false },
+      message: { message_thread_id: undefined },
+      reply: vi.fn().mockResolvedValue(undefined),
+    };
+    await councilResetHandler!(ctx);
+
+    expect(ctx.reply).toHaveBeenCalledTimes(1);
+    expect(String(ctx.reply.mock.calls[0][0])).toMatch(/not configured/i);
+
+    await adapter.stop();
+    db.close();
+  });
+
   // Round-8 codex finding [P1]: grammY runs middleware in registration order
   // and `on('message:text', defaultTextHandler)` consumes every text update
   // including `/councilreset` unless the command handlers are registered
