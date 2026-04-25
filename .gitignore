@@ -10,3 +10,6 @@ data/
 # Mockup assets — third-party illustrations (soco-st.com), licensed for use
 # but redistribution is restricted. See mockups/README.md for how to reproduce.
 mockups/assets/
+
+# Private ROADMAP lives in claude-memory-sync (花花/roadmaps/), not this public repo
+ROADMAP.md
