@@ -24,6 +24,7 @@ import {
 } from './adversarial-provers.js';
 import { BlindReviewStore, buildScoringKeyboard } from './blind-review.js';
 import { FacilitatorAgent } from './facilitator.js';
+import type { FacilitatorInterventionResult } from './facilitator.js';
 import { pickRandomAdversarialRole, buildRotationKeyboard } from './pvg-rotate.js';
 import { PvgRotateStore } from './pvg-rotate-store.js';
 import type { AdversarialRole } from './adversarial-provers.js';
@@ -110,7 +111,7 @@ export class DeliberationHandler {
   private facilitatorIntervention:
     | {
         recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
-        evaluateIntervention: (threadId: number) => Promise<void>;
+        evaluateIntervention: (threadId: number) => Promise<FacilitatorInterventionResult | null>;
       }
     | undefined;
   private sessions: Map<number, SessionState> = new Map();
@@ -155,7 +156,7 @@ export class DeliberationHandler {
       // no-op-equivalent that still satisfies the contract.
       facilitatorIntervention?: {
         recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
-        evaluateIntervention: (threadId: number) => Promise<void>;
+        evaluateIntervention: (threadId: number) => Promise<FacilitatorInterventionResult | null>;
       };
     },
   ) {
@@ -200,27 +201,23 @@ export class DeliberationHandler {
       this.runDeliberation(payload.threadId, payload.message, payload.intent, payload.complexity);
     });
 
-    // Subscribe to facilitator.intervened — only add non-structure messages to history
-    // Structure announcements (opening messages) are display-only, not part of deliberation context
-    this.bus.on('facilitator.intervened', (payload) => {
-      if (payload.action === 'structure') return;
-
-      const session = this.sessions.get(payload.threadId);
-      if (!session) return;
-
-      const facilitatorMsg: CouncilMessage = {
-        id: `facilitator-${Date.now()}`,
-        role: 'agent',
-        agentId: 'facilitator',
-        content: payload.content,
-        timestamp: Date.now(),
-        threadId: payload.threadId,
-        metadata: {
-          assignedRole: 'synthesizer',
-        },
-      };
-      this.currentMessages(session).push(facilitatorMsg);
-    });
+    // v0.5.2 P1-B option C (codex round-3 [P1]): the facilitator.intervened
+    // listener used to push facilitator messages into currentMessages. That
+    // was the last surviving "async listener mutates session state" path —
+    // and even with the round-2 timeout swallow, a slow LLM call could still
+    // resolve in the background, emit facilitator.intervened, and have the
+    // listener push into a segment that /councilreset had since sealed.
+    //
+    // The fix: ALL writes to currentMessages from facilitator interventions
+    // now go through the inline path in runDeliberation, which executes
+    // synchronously while deliberationInFlight is true. Late LLM emits
+    // (post-timeout, post-deliberation.ended) reach the bus but no listener
+    // pushes them into segments. Router still listens for downstream
+    // broadcast (router.ts) — that's harmless display-only side-effect.
+    //
+    // 'structure' announcements from FacilitatorAgent.announceStructure are
+    // also display-only — they were already filtered out here, so dropping
+    // the listener loses no behaviour for them.
 
     // Subscribe to pattern.detected — store pending injection
     this.bus.on('pattern.detected', (payload) => {
@@ -772,15 +769,14 @@ export class DeliberationHandler {
           classification,
         });
 
-        // v0.5.2 P1-B: drive facilitator intervention inline (was an
-        // async listener on agent.responded inside FacilitatorAgent —
-        // racy because the LLM call could resolve after deliberation.ended
-        // cleared deliberationInFlight, letting /councilreset seal the
-        // segment before the late facilitator.intervened landed). Awaiting
-        // here keeps the work inside the in-flight window so the reset
-        // guard sees it. evaluateIntervention internally emits the
-        // facilitator.intervened event for downstream consumers (router
-        // broadcasts to Telegram, listener pushes to currentMessages).
+        // v0.5.2 P1-B option C: drive facilitator intervention inline AND
+        // push the result into currentMessages from this synchronous flow.
+        // evaluateIntervention now RETURNS the decision instead of emitting
+        // it from inside the LLM callback. That means a late LLM resolution
+        // (post-timeout, post-deliberation.ended) cannot push into a sealed
+        // segment — there is no listener that would do the push, and the
+        // caller already moved on. Single-owner mutation: this block is the
+        // only place facilitator messages enter currentMessages.
         if (this.facilitatorIntervention) {
           this.facilitatorIntervention.recordAgentResponse(
             threadId,
@@ -791,7 +787,7 @@ export class DeliberationHandler {
           // can't wedge the deliberation loop. Errors and timeouts are
           // both swallowed with a console warning — intervention is
           // best-effort, the round must finish.
-          await raceWithTimeout(
+          const intervention = await raceWithTimeout(
             this.facilitatorIntervention.evaluateIntervention(threadId),
             DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS,
             `facilitator intervention timed out after ${DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS}ms`,
@@ -800,7 +796,30 @@ export class DeliberationHandler {
               `[deliberation] mid-round facilitator intervention failed for thread ${threadId}, agent ${worker.id}:`,
               err instanceof Error ? err.message : err,
             );
+            return null;
           });
+
+          if (intervention) {
+            // Push to currentMessages first so the next agent in the loop
+            // sees the intervention as part of context, then emit for
+            // router / Telegram broadcast.
+            const facilitatorMsg: CouncilMessage = {
+              id: `facilitator-${Date.now()}`,
+              role: 'agent',
+              agentId: 'facilitator',
+              content: intervention.content,
+              timestamp: Date.now(),
+              threadId,
+              metadata: { assignedRole: 'synthesizer' },
+            };
+            this.currentMessages(session).push(facilitatorMsg);
+            this.bus.emit('facilitator.intervened', {
+              threadId,
+              action: intervention.action,
+              content: intervention.content,
+              ...(intervention.targetAgent ? { targetAgent: intervention.targetAgent } : {}),
+            });
+          }
         }
       }
 

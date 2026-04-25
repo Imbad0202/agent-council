@@ -104,88 +104,47 @@ describe('FacilitatorAgent', () => {
       expect(worker.respond as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
     });
 
-    it('emits facilitator.intervened when worker returns non-none action', async () => {
+    it('returns intervention decision when worker returns non-none action', async () => {
+      // v0.5.2 P1-B option C: evaluateIntervention now RETURNS the decision
+      // instead of emitting facilitator.intervened. Caller decides whether
+      // to push + emit. announceStructure still emits directly (display-only).
       worker = makeWorker('{"action": "steer", "content": "請聚焦在可行性上。", "target_agent": null}');
       _facilitator = new FacilitatorAgent(bus, worker);
 
-      const interventions: EventMap['facilitator.intervened'][] = [];
-      bus.on('facilitator.intervened', (p) => interventions.push(p));
-
-      bus.emit('deliberation.started', {
-        threadId: 7,
-        participants: ['huahua', 'binbin'],
-        roles: { huahua: 'advocate', binbin: 'critic' },
-        structure: 'free',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      // structure intervened already captured
-      const structureCount = interventions.length;
-
-      // Caller drives both inline (was: bus.emit('agent.responded', ...))
       _facilitator.recordAgentResponse(7, 'huahua', 'I think we should go with microservices.');
       _facilitator.recordAgentResponse(7, 'binbin', 'I agree, microservices are great!');
-      await _facilitator.evaluateIntervention(7);
+      const result = await _facilitator.evaluateIntervention(7);
 
-      // Should have emitted a new facilitator.intervened with steer
-      const newInterventions = interventions.slice(structureCount);
-      expect(newInterventions).toHaveLength(1);
-      expect(newInterventions[0].action).toBe('steer');
-      expect(newInterventions[0].content).toBe('請聚焦在可行性上。');
-      expect(newInterventions[0].threadId).toBe(7);
+      expect(result).toEqual({
+        action: 'steer',
+        content: '請聚焦在可行性上。',
+      });
     });
 
-    it('does NOT emit facilitator.intervened when worker returns action=none', async () => {
+    it('returns null when worker returns action=none', async () => {
       worker = makeWorker('{"action": "none", "content": "", "target_agent": null}');
       _facilitator = new FacilitatorAgent(bus, worker);
 
-      const interventions: EventMap['facilitator.intervened'][] = [];
-      bus.on('facilitator.intervened', (p) => interventions.push(p));
-
-      bus.emit('deliberation.started', {
-        threadId: 8,
-        participants: ['huahua', 'binbin'],
-        roles: {},
-        structure: 'free',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      const structureCount = interventions.length;
-
       _facilitator.recordAgentResponse(8, 'huahua', 'Response 1');
       _facilitator.recordAgentResponse(8, 'binbin', 'Response 2');
-      await _facilitator.evaluateIntervention(8);
+      const result = await _facilitator.evaluateIntervention(8);
 
-      // No new interventions (worker returns none)
-      const newInterventions = interventions.slice(structureCount);
-      expect(newInterventions).toHaveLength(0);
+      expect(result).toBeNull();
     });
 
-    it('sets targetAgent on emitted event when worker returns non-null target_agent', async () => {
+    it('returns targetAgent in decision when worker returns non-null target_agent', async () => {
       worker = makeWorker('{"action": "challenge", "content": "你的論點有漏洞。", "target_agent": "binbin"}');
       _facilitator = new FacilitatorAgent(bus, worker);
 
-      const interventions: EventMap['facilitator.intervened'][] = [];
-      bus.on('facilitator.intervened', (p) => interventions.push(p));
-
-      bus.emit('deliberation.started', {
-        threadId: 9,
-        participants: ['huahua', 'binbin'],
-        roles: {},
-        structure: 'free',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      const structureCount = interventions.length;
-
       _facilitator.recordAgentResponse(9, 'huahua', 'A response');
       _facilitator.recordAgentResponse(9, 'binbin', 'Another response');
-      await _facilitator.evaluateIntervention(9);
+      const result = await _facilitator.evaluateIntervention(9);
 
-      const newInterventions = interventions.slice(structureCount);
-      expect(newInterventions).toHaveLength(1);
-      expect(newInterventions[0].action).toBe('challenge');
-      expect(newInterventions[0].targetAgent).toBe('binbin');
+      expect(result).toEqual({
+        action: 'challenge',
+        content: '你的論點有漏洞。',
+        targetAgent: 'binbin',
+      });
     });
   });
 

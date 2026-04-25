@@ -73,68 +73,60 @@ describe('FacilitatorAgent — late intervened race (v0.5.2 P1-B)', () => {
     bus = new EventBus();
   });
 
-  it('inline-await caller: facilitator.intervened completes BEFORE deliberation.ended', async () => {
-    // This simulates the post-fix DeliberationHandler call site:
-    //   bus.emit('agent.responded', ...);
-    //   facilitator.recordAgentResponse(...);
-    //   await facilitator.evaluateIntervention(threadId);
-    //   ... rest of round ...
-    //   bus.emit('deliberation.ended', ...);
-    //
-    // Because evaluateIntervention is awaited, any facilitator.intervened
-    // event for this round fires BEFORE deliberation.ended. The pre-fix
-    // listener path violated this.
+  it('evaluateIntervention RETURNS decision instead of emitting (option C contract)', async () => {
+    // v0.5.2 P1-B option C: evaluateIntervention no longer emits
+    // facilitator.intervened from inside the LLM callback. The caller
+    // (DeliberationHandler) decides synchronously whether to push +
+    // emit, which closes the timeout-leak race where a slow LLM could
+    // emit AFTER deliberation.ended cleared the in-flight window.
 
     const { worker, release, callStarted } = makeControllableWorker();
     facilitator = new FacilitatorAgent(bus, worker);
 
-    const interventions: EventMap['facilitator.intervened'][] = [];
-    bus.on('facilitator.intervened', (p) => interventions.push(p));
+    const interventionEvents: EventMap['facilitator.intervened'][] = [];
+    bus.on('facilitator.intervened', (p) => interventionEvents.push(p));
 
-    let interventionsAtEnded: number | null = null;
-    bus.on('deliberation.ended', () => {
-      interventionsAtEnded = interventions.length;
-    });
-
-    bus.emit('deliberation.started', {
-      threadId: 99,
-      participants: ['huahua', 'binbin'],
-      roles: { huahua: 'advocate', binbin: 'critic' },
-      structure: 'free',
-      topic: 'P1-B race',
-    });
-    await new Promise((r) => setTimeout(r, 5));
-    const structureCount = interventions.length;
-
-    // Caller drives recordAgentResponse + evaluateIntervention inline.
     facilitator.recordAgentResponse(99, 'huahua', 'first');
     facilitator.recordAgentResponse(99, 'binbin', 'second');
 
-    // Start the LLM call but don't await yet — we need to release the
-    // controllable promise from the test side.
-    const evalPromise = facilitator.evaluateIntervention(99);
+    const resultPromise = facilitator.evaluateIntervention(99);
     await callStarted;
-
-    // Release the LLM response. evalPromise resolves once the listener
-    // chain (synchronous emit) has fired.
     release('{"action": "steer", "content": "inline steer", "target_agent": null}');
-    await evalPromise;
+    const result = await resultPromise;
 
-    // Caller emits deliberation.ended AFTER awaiting evaluateIntervention.
-    bus.emit('deliberation.ended', {
-      threadId: 99,
-      conclusion: 'done',
-      intent: 'deliberation',
-    });
-    await new Promise((r) => setTimeout(r, 10));
+    // Decision is returned, not emitted from inside FacilitatorAgent.
+    expect(result).toEqual({ action: 'steer', content: 'inline steer' });
+    expect(interventionEvents).toHaveLength(0);
+  });
 
-    // Intervention count at deliberation.ended must include the steer event
-    // — i.e. it landed BEFORE ended fired, not after.
-    expect(interventionsAtEnded).not.toBeNull();
-    expect(interventionsAtEnded).toBeGreaterThan(structureCount);
+  it('late LLM resolution after timeout swallow does NOT emit (race fully closed)', async () => {
+    // Round-3 P1 regression test: even if the caller times out and stops
+    // awaiting, evaluateIntervention's eventual completion must not
+    // produce a facilitator.intervened event. Since option C moved the
+    // emit into the caller, a "late" decision is just an unobserved
+    // return value — the bus never sees it.
 
-    // No additional interventions land AFTER deliberation.ended.
-    expect(interventions.length).toBe(interventionsAtEnded);
+    const { worker, release, callStarted } = makeControllableWorker();
+    facilitator = new FacilitatorAgent(bus, worker);
+
+    const interventionEvents: EventMap['facilitator.intervened'][] = [];
+    bus.on('facilitator.intervened', (p) => interventionEvents.push(p));
+
+    facilitator.recordAgentResponse(50, 'huahua', 'first');
+    facilitator.recordAgentResponse(50, 'binbin', 'second');
+
+    // Caller starts the call but abandons it (simulating timeout swallow).
+    const abandonedPromise = facilitator.evaluateIntervention(50);
+    await callStarted;
+    // Don't await abandonedPromise — caller "moved on".
+
+    // Long after the round would have ended, the LLM finally resolves.
+    release('{"action": "steer", "content": "late ghost", "target_agent": null}');
+    await abandonedPromise; // let internal completion happen
+    await new Promise((r) => setTimeout(r, 20));
+
+    // No emit means no listener could push to a sealed segment.
+    expect(interventionEvents).toHaveLength(0);
   });
 
   it('mid-round facilitator hang does NOT wedge the deliberation loop (round-2 P1)', async () => {

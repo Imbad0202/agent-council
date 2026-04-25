@@ -9,6 +9,25 @@ interface FacilitatorDecision {
   target_agent: string | null;
 }
 
+// v0.5.2 P1-B option C (codex round-3 [P1]): evaluateIntervention now
+// RETURNS the intervention decision instead of emitting it directly. The
+// caller (DeliberationHandler.runDeliberation) decides synchronously
+// whether to push the resulting facilitator message into currentMessages
+// AND emit the facilitator.intervened event for downstream broadcast.
+//
+// Why: the prior design emitted from inside the LLM callback. If the
+// caller's await timed out, the LLM call could still resolve in the
+// background and emit late, push'ing into a segment that /councilreset
+// had since sealed. By moving the emit to the caller, a timed-out
+// intervention produces NO emit and NO push — single ownership of the
+// "should this become part of the segment" decision lives in the
+// runDeliberation while-deliberationInFlight window.
+export interface FacilitatorInterventionResult {
+  action: FacilitatorAction;
+  content: string;
+  targetAgent?: string;
+}
+
 export class FacilitatorAgent {
   private bus: EventBus;
   private worker: AgentWorker;
@@ -81,11 +100,13 @@ export class FacilitatorAgent {
     this.deliberationHistory.set(threadId, history);
   }
 
-  public async evaluateIntervention(threadId: number): Promise<void> {
+  public async evaluateIntervention(
+    threadId: number,
+  ): Promise<FacilitatorInterventionResult | null> {
     const history = this.deliberationHistory.get(threadId) ?? [];
 
     // Only evaluate after 2+ messages
-    if (history.length < 2) return;
+    if (history.length < 2) return null;
 
     const transcript = history
       .map((m) => `${m.agentId ?? 'Agent'}: ${m.content}`)
@@ -102,17 +123,15 @@ export class FacilitatorAgent {
     try {
       const response = await this.worker.respond([evalMessage], 'synthesizer');
       const decision = this.parseDecision(response.content);
-
-      if (decision.action !== 'none') {
-        this.bus.emit('facilitator.intervened', {
-          threadId,
-          action: decision.action as FacilitatorAction,
-          content: decision.content,
-          ...(decision.target_agent ? { targetAgent: decision.target_agent } : {}),
-        });
-      }
+      if (decision.action === 'none') return null;
+      return {
+        action: decision.action as FacilitatorAction,
+        content: decision.content,
+        ...(decision.target_agent ? { targetAgent: decision.target_agent } : {}),
+      };
     } catch {
       // Evaluation failed — skip intervention silently
+      return null;
     }
   }
 
