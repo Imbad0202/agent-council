@@ -33,6 +33,25 @@ import { buildCritiquePrompt } from './human-critique-prompts.js';
 import { scoreSession, type DepthScoreResult } from './collaboration-depth.js';
 
 const DEFAULT_CRITIQUE_TIMEOUT_MS = 30_000;
+
+// v0.5.2 P1-B (codex round-2 [P1]): mid-round facilitator interventions
+// were a fire-and-forget listener pre-fix; awaiting them inline made the
+// hot path block on the facilitator provider. If the provider stalls, we
+// must NOT wedge the round — intervention is best-effort. Time out
+// individually and continue the loop. Matches the critique-timeout
+// posture (also user-controllable indirectly via facilitator's own
+// provider config).
+const DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS = 30_000;
+
+function raceWithTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(msg)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 const HUMAN_SENTINEL = '__human__';
 
 interface CritiqueRecordInternal {
@@ -150,19 +169,30 @@ export class DeliberationHandler {
     this.critiqueStore = options?.critiqueStore;
     this.critiqueTimeoutMs = options?.critiqueTimeoutMs ?? DEFAULT_CRITIQUE_TIMEOUT_MS;
     this.resetSnapshotDB = options?.resetSnapshotDB;
-    // v0.5.2 P1-B (codex round-1 finding): if a caller wires only
-    // facilitatorWorker (no explicit facilitatorIntervention), default-wire
-    // a FacilitatorAgent here so mid-round steer/challenge interventions
-    // still happen. Pre-fix, the listener-driven path made this automatic;
-    // requiring callers to opt in explicitly was a silent contract break
-    // for any handler built without going through src/index.ts (tests,
-    // future external consumers). Explicit hook still wins when both are
-    // provided.
-    this.facilitatorIntervention =
-      options?.facilitatorIntervention ??
-      (options?.facilitatorWorker
-        ? this.buildDefaultFacilitatorIntervention(bus, options.facilitatorWorker)
-        : undefined);
+    // v0.5.2 P1-B (codex rounds 1-2):
+    // - Round-1: a caller wiring only facilitatorWorker silently lost
+    //   mid-round steer/challenge interventions when the agent.responded
+    //   listener was removed.
+    // - Round-2 [P2]: even after default-wiring the hook from
+    //   facilitatorWorker, if the caller also supplies an explicit
+    //   facilitatorIntervention we MUST still create the FacilitatorAgent
+    //   so the other listeners (deliberation.started structure announce,
+    //   pattern.detected, convergence.detected, deliberation.ended history
+    //   cleanup) keep working. Otherwise a "narrow override" silently
+    //   disables four unrelated facilitator behaviors.
+    // Always instantiate when facilitatorWorker is present; the explicit
+    // hook only overrides the mid-round intervention path.
+    if (options?.facilitatorWorker) {
+      const agent = new FacilitatorAgent(bus, options.facilitatorWorker);
+      this.facilitatorIntervention =
+        options.facilitatorIntervention ?? {
+          recordAgentResponse: (threadId, agentId, content) =>
+            agent.recordAgentResponse(threadId, agentId, content),
+          evaluateIntervention: (threadId) => agent.evaluateIntervention(threadId),
+        };
+    } else {
+      this.facilitatorIntervention = options?.facilitatorIntervention;
+    }
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
@@ -237,21 +267,6 @@ export class DeliberationHandler {
     this.bus.on('intent.classified', ({ message, threadId }) => {
       this.getSession(threadId).pendingClassifications.delete(message.id);
     });
-  }
-
-  private buildDefaultFacilitatorIntervention(
-    bus: EventBus,
-    facilitatorWorker: AgentWorker,
-  ): {
-    recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
-    evaluateIntervention: (threadId: number) => Promise<void>;
-  } {
-    const agent = new FacilitatorAgent(bus, facilitatorWorker);
-    return {
-      recordAgentResponse: (threadId, agentId, content) =>
-        agent.recordAgentResponse(threadId, agentId, content),
-      evaluateIntervention: (threadId) => agent.evaluateIntervention(threadId),
-    };
   }
 
   private getSession(threadId: number): SessionState {
@@ -772,7 +787,20 @@ export class DeliberationHandler {
             worker.id,
             storedContent,
           );
-          await this.facilitatorIntervention.evaluateIntervention(threadId);
+          // Time-bound the intervention so a hung facilitator provider
+          // can't wedge the deliberation loop. Errors and timeouts are
+          // both swallowed with a console warning — intervention is
+          // best-effort, the round must finish.
+          await raceWithTimeout(
+            this.facilitatorIntervention.evaluateIntervention(threadId),
+            DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS,
+            `facilitator intervention timed out after ${DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS}ms`,
+          ).catch((err) => {
+            console.error(
+              `[deliberation] mid-round facilitator intervention failed for thread ${threadId}, agent ${worker.id}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
         }
       }
 

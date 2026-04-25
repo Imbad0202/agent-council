@@ -137,6 +137,61 @@ describe('FacilitatorAgent — late intervened race (v0.5.2 P1-B)', () => {
     expect(interventions.length).toBe(interventionsAtEnded);
   });
 
+  it('mid-round facilitator hang does NOT wedge the deliberation loop (round-2 P1)', async () => {
+    // Codex round-2 P1: an unbounded facilitator call on the hot path could
+    // wedge the round if the provider stalls. The handler installs a 30s
+    // timeout per intervention call and swallows the rejection so the round
+    // continues. This test injects a hanging facilitatorIntervention hook
+    // and verifies deliberation.ended still fires.
+    const { DeliberationHandler } = await import('../../src/council/deliberation.js');
+    const { makeWorker, minConfig, makeMessage } = await import('./helpers.js');
+
+    const workers = [makeWorker('agent-a', 'A'), makeWorker('agent-b', 'B')];
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+
+    // Hook that hangs forever on every evaluateIntervention call. The
+    // handler must time it out and proceed.
+    const hangingHook = {
+      recordAgentResponse: vi.fn(),
+      evaluateIntervention: vi.fn(() => new Promise<void>(() => {})),
+    };
+
+    const localBus = new EventBus();
+    new DeliberationHandler(localBus, workers, minConfig, sendFn, {
+      facilitatorIntervention: hangingHook,
+    });
+
+    const ended = new Promise<void>((resolve) => {
+      localBus.on('deliberation.ended', () => resolve());
+    });
+
+    // Suppress expected "facilitator intervention failed" console noise.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      localBus.emit('intent.classified', {
+        intent: 'deliberation',
+        complexity: 'medium',
+        threadId: 11,
+        message: makeMessage('hang test', 11),
+      });
+
+      // Advance past the timeout for each agent's intervention (2 × 30s).
+      // advanceTimersByTimeAsync also runs queued microtasks between ticks.
+      await vi.advanceTimersByTimeAsync(60_001);
+
+      await ended;
+
+      // The hook was called for both agents; both timed out.
+      expect(hangingHook.recordAgentResponse).toHaveBeenCalledTimes(2);
+      expect(hangingHook.evaluateIntervention).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      errSpy.mockRestore();
+    }
+  });
+
   it('FacilitatorAgent no longer subscribes to agent.responded (no fire-and-forget LLM call)', async () => {
     // Pre-fix the constructor wired bus.on('agent.responded', ...) which
     // kicked off evaluateIntervention asynchronously. This test pins the
