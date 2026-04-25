@@ -184,6 +184,55 @@ describe('FacilitatorAgent — late intervened race (v0.5.2 P1-B)', () => {
     }
   });
 
+  it('synchronous throw from facilitator hook does NOT wedge the round (round-4 P3)', async () => {
+    // Codex round-4 P3: hook calls were not wrapped in try/catch, so a
+    // custom implementation that throws synchronously from
+    // recordAgentResponse or from a non-async evaluateIntervention would
+    // abort runDeliberation before the .catch on raceWithTimeout could
+    // help. Caller must isolate hook failures.
+    const { DeliberationHandler } = await import('../../src/council/deliberation.js');
+    const { makeWorker, minConfig, makeMessage } = await import('./helpers.js');
+
+    const workers = [makeWorker('agent-a', 'A'), makeWorker('agent-b', 'B')];
+    const sendFn = vi.fn().mockResolvedValue(undefined);
+
+    // Hook that throws synchronously from BOTH methods.
+    const throwingHook = {
+      recordAgentResponse: vi.fn(() => {
+        throw new Error('record threw');
+      }),
+      evaluateIntervention: vi.fn(() => {
+        throw new Error('evaluate threw');
+      }),
+    };
+
+    const localBus = new EventBus();
+    new DeliberationHandler(localBus, workers, minConfig, sendFn, {
+      facilitatorIntervention: throwingHook,
+    });
+
+    const ended = new Promise<void>((resolve) => {
+      localBus.on('deliberation.ended', () => resolve());
+    });
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      localBus.emit('intent.classified', {
+        intent: 'deliberation',
+        complexity: 'medium',
+        threadId: 12,
+        message: makeMessage('throw test', 12),
+      });
+      await ended;
+
+      // Both agents ran despite both hook calls throwing on every agent.
+      expect(throwingHook.recordAgentResponse).toHaveBeenCalledTimes(2);
+      expect(throwingHook.evaluateIntervention).toHaveBeenCalledTimes(2);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
   it('FacilitatorAgent no longer subscribes to agent.responded (no fire-and-forget LLM call)', async () => {
     // Pre-fix the constructor wired bus.on('agent.responded', ...) which
     // kicked off evaluateIntervention asynchronously. This test pins the

@@ -53,15 +53,15 @@ export class FacilitatorAgent {
     // in-flight window so the reset guard sees it. See round-12 P1-B in
     // memory-sync project_agent_council_v051_session_reset.md.
 
-    // On convergence: decide to challenge or allow
-    this.bus.on('convergence.detected', (payload) => {
-      this.handleConvergence(payload.threadId, payload.angle);
-    });
-
-    // On pattern: issue targeted guidance directly (no LLM call)
-    this.bus.on('pattern.detected', (payload) => {
-      this.handlePattern(payload.threadId, payload.targetAgent, payload.pattern);
-    });
+    // v0.5.2 P1-B option C (codex round-4 [P2]): convergence.detected and
+    // pattern.detected listeners removed. The methods themselves now return
+    // FacilitatorInterventionResult | null (see handleConvergence /
+    // handlePattern below). When either trigger is re-enabled, the trigger
+    // site MUST call the method directly and route the returned decision
+    // through DeliberationHandler's inline path so the resulting message
+    // both broadcasts AND enters currentMessages. Re-subscribing here would
+    // reintroduce the broadcast-without-history mismatch that prompted the
+    // option-C refactor.
 
     // Clean up history on deliberation end
     this.bus.on('deliberation.ended', (payload) => {
@@ -135,7 +135,24 @@ export class FacilitatorAgent {
     }
   }
 
-  private async handleConvergence(threadId: number, angle: string): Promise<void> {
+  // v0.5.2 P1-B option C (codex round-4 [P2]): handleConvergence and
+  // handlePattern previously emitted facilitator.intervened directly.
+  // Under option C the listener that pushed those events into
+  // currentMessages is gone, so a direct emit would broadcast to Telegram
+  // but never persist in the transcript — the next agent would never see
+  // the convergence challenge, silently disabling the steering.
+  //
+  // Both convergence.detected and pattern.detected currently have no live
+  // emitters in the codebase (grep -rn "emit.*convergence.detected" /
+  // "emit.*pattern.detected"), so this is dormant code. When either is
+  // re-enabled, the trigger site MUST call these methods and route the
+  // returned decision through the same inline path as evaluateIntervention.
+  // Returning null without emitting keeps the event-bus quiet so we don't
+  // leak orphan broadcasts.
+  public async handleConvergence(
+    threadId: number,
+    angle: string,
+  ): Promise<FacilitatorInterventionResult | null> {
     const convergenceMessage: CouncilMessage = {
       id: `facilitator-convergence-${Date.now()}`,
       role: 'human',
@@ -147,29 +164,30 @@ export class FacilitatorAgent {
     try {
       const response = await this.worker.respond([convergenceMessage], 'synthesizer');
       const decision = this.parseDecision(response.content);
-
-      if (decision.action !== 'none') {
-        this.bus.emit('facilitator.intervened', {
-          threadId,
-          action: decision.action as FacilitatorAction,
-          content: decision.content,
-          ...(decision.target_agent ? { targetAgent: decision.target_agent } : {}),
-        });
-      }
+      if (decision.action === 'none') return null;
+      return {
+        action: decision.action as FacilitatorAction,
+        content: decision.content,
+        ...(decision.target_agent ? { targetAgent: decision.target_agent } : {}),
+      };
     } catch {
       // Convergence handling failed — skip silently
+      return null;
     }
   }
 
-  private handlePattern(threadId: number, targetAgent: string, pattern: PatternType): void {
+  public handlePattern(
+    threadId: number,
+    targetAgent: string,
+    pattern: PatternType,
+  ): FacilitatorInterventionResult {
+    void threadId; // reserved for future telemetry / history correlation
     const content = PATTERN_INJECTION_PROMPTS[pattern];
-
-    this.bus.emit('facilitator.intervened', {
-      threadId,
+    return {
       action: 'challenge',
       content,
       targetAgent,
-    });
+    };
   }
 
   private parseDecision(responseContent: string): FacilitatorDecision {

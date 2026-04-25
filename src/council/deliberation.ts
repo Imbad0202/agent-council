@@ -778,17 +778,34 @@ export class DeliberationHandler {
         // caller already moved on. Single-owner mutation: this block is the
         // only place facilitator messages enter currentMessages.
         if (this.facilitatorIntervention) {
-          this.facilitatorIntervention.recordAgentResponse(
-            threadId,
-            worker.id,
-            storedContent,
-          );
+          // Wrap both hook calls so a custom implementation that throws
+          // synchronously (e.g. a non-async evaluateIntervention or a
+          // recordAgentResponse that throws) cannot wedge the round
+          // before the .catch on raceWithTimeout has a chance to fire.
+          // (codex round-4 [P3])
+          try {
+            this.facilitatorIntervention.recordAgentResponse(
+              threadId,
+              worker.id,
+              storedContent,
+            );
+          } catch (err) {
+            console.error(
+              `[deliberation] facilitator recordAgentResponse threw for thread ${threadId}:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+
           // Time-bound the intervention so a hung facilitator provider
           // can't wedge the deliberation loop. Errors and timeouts are
           // both swallowed with a console warning — intervention is
-          // best-effort, the round must finish.
+          // best-effort, the round must finish. Promise.resolve().then()
+          // normalises sync throws from a non-async hook implementation
+          // into rejected promises so .catch() handles both paths.
           const intervention = await raceWithTimeout(
-            this.facilitatorIntervention.evaluateIntervention(threadId),
+            Promise.resolve().then(() =>
+              this.facilitatorIntervention!.evaluateIntervention(threadId),
+            ),
             DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS,
             `facilitator intervention timed out after ${DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS}ms`,
           ).catch((err) => {

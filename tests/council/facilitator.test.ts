@@ -148,146 +148,50 @@ describe('FacilitatorAgent', () => {
     });
   });
 
-  describe('convergence.detected → handleConvergence', () => {
-    it('calls worker.respond on convergence.detected', async () => {
+  // v0.5.2 P1-B option C (codex round-4 [P2]): convergence.detected and
+  // pattern.detected listeners removed. Methods are now public so the
+  // future trigger site can call them directly and route the returned
+  // decision through DeliberationHandler's inline path. Tests exercise
+  // the public API instead of the dropped listener flow.
+  describe('handleConvergence (public method)', () => {
+    it('calls worker.respond when invoked', async () => {
       worker = makeWorker('{"action": "challenge", "content": "你們達成了共識，但有沒有考慮成本？", "target_agent": null}');
       _facilitator = new FacilitatorAgent(bus, worker);
-
-      bus.emit('deliberation.started', {
-        threadId: 11,
-        participants: ['huahua', 'binbin'],
-        roles: {},
-        structure: 'free',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      bus.emit('convergence.detected', {
-        threadId: 11,
-        angle: 'cost',
-      });
-      await new Promise((r) => setTimeout(r, 50));
-
+      await _facilitator.handleConvergence(11, 'cost');
       expect(worker.respond as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
     });
 
-    it('emits facilitator.intervened with challenge action on convergence', async () => {
+    it('returns challenge decision when worker returns non-none action', async () => {
       worker = makeWorker('{"action": "challenge", "content": "請挑戰這個共識。", "target_agent": null}');
       _facilitator = new FacilitatorAgent(bus, worker);
-
-      const interventions: EventMap['facilitator.intervened'][] = [];
-      bus.on('facilitator.intervened', (p) => interventions.push(p));
-
-      bus.emit('deliberation.started', {
-        threadId: 12,
-        participants: ['huahua', 'binbin'],
-        roles: {},
-        structure: 'free',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      const structureCount = interventions.length;
-
-      bus.emit('convergence.detected', {
-        threadId: 12,
-        angle: 'risk',
-      });
-      await new Promise((r) => setTimeout(r, 50));
-
-      const newInterventions = interventions.slice(structureCount);
-      expect(newInterventions).toHaveLength(1);
-      expect(newInterventions[0].action).toBe('challenge');
-      expect(newInterventions[0].content).toBe('請挑戰這個共識。');
+      const result = await _facilitator.handleConvergence(12, 'risk');
+      expect(result).toEqual({ action: 'challenge', content: '請挑戰這個共識。' });
     });
 
-    it('does not emit when worker returns none on convergence', async () => {
+    it('returns null when worker returns none', async () => {
       worker = makeWorker('{"action": "none", "content": "", "target_agent": null}');
       _facilitator = new FacilitatorAgent(bus, worker);
-
-      const interventions: EventMap['facilitator.intervened'][] = [];
-      bus.on('facilitator.intervened', (p) => interventions.push(p));
-
-      bus.emit('deliberation.started', {
-        threadId: 13,
-        participants: ['huahua', 'binbin'],
-        roles: {},
-        structure: 'free',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      const structureCount = interventions.length;
-
-      bus.emit('convergence.detected', {
-        threadId: 13,
-        angle: 'alternatives',
-      });
-      await new Promise((r) => setTimeout(r, 50));
-
-      const newInterventions = interventions.slice(structureCount);
-      expect(newInterventions).toHaveLength(0);
+      const result = await _facilitator.handleConvergence(13, 'alternatives');
+      expect(result).toBeNull();
     });
   });
 
-  describe('pattern.detected → handlePattern', () => {
-    it('emits facilitator.intervened with challenge directly (no worker call)', async () => {
+  describe('handlePattern (public method)', () => {
+    it('returns challenge decision with target agent and pattern content (no worker call)', () => {
       worker = makeWorker('{"action": "none", "content": "", "target_agent": null}');
       _facilitator = new FacilitatorAgent(bus, worker);
-
-      const interventions: EventMap['facilitator.intervened'][] = [];
-      bus.on('facilitator.intervened', (p) => interventions.push(p));
-
-      bus.emit('deliberation.started', {
-        threadId: 15,
-        participants: ['huahua', 'binbin'],
-        roles: {},
-        structure: 'free',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      const structureCount = interventions.length;
-
-      bus.emit('pattern.detected', {
-        threadId: 15,
-        pattern: 'mirror',
-        targetAgent: 'binbin',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      const newInterventions = interventions.slice(structureCount);
-      expect(newInterventions).toHaveLength(1);
-      expect(newInterventions[0].action).toBe('challenge');
-      expect(newInterventions[0].targetAgent).toBe('binbin');
-      expect(newInterventions[0].content).toBeTruthy();
-      // worker.respond should NOT have been called for pattern handling
+      const result = _facilitator.handlePattern(15, 'binbin', 'mirror');
+      expect(result.action).toBe('challenge');
+      expect(result.targetAgent).toBe('binbin');
+      expect(result.content).toBeTruthy();
       expect(worker.respond as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     });
 
-    it('includes pattern-relevant content in challenge for fake_dissent pattern', async () => {
+    it('routes pattern-specific content for fake_dissent', () => {
       worker = makeWorker('{"action": "none", "content": "", "target_agent": null}');
       _facilitator = new FacilitatorAgent(bus, worker);
-
-      const interventions: EventMap['facilitator.intervened'][] = [];
-      bus.on('facilitator.intervened', (p) => interventions.push(p));
-
-      bus.emit('deliberation.started', {
-        threadId: 16,
-        participants: ['huahua', 'binbin'],
-        roles: {},
-        structure: 'free',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      const structureCount = interventions.length;
-
-      bus.emit('pattern.detected', {
-        threadId: 16,
-        pattern: 'fake_dissent',
-        targetAgent: 'huahua',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      const newInterventions = interventions.slice(structureCount);
-      expect(newInterventions).toHaveLength(1);
-      expect(newInterventions[0].targetAgent).toBe('huahua');
+      const result = _facilitator.handlePattern(16, 'huahua', 'fake_dissent');
+      expect(result.targetAgent).toBe('huahua');
     });
   });
 
