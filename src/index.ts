@@ -29,7 +29,6 @@ import {
 import type { CritiqueUiAdapter } from './adapters/telegram.js';
 import type { DefaultCritiquePromptAdapter } from './adapters/cli.js';
 import type { SessionResetAdapter } from './adapters/telegram.js';
-import { FacilitatorAgent } from './council/facilitator.js';
 import { ActiveRecall } from './memory/active-recall.js';
 import { ExecutionDispatcher } from './execution/dispatcher.js';
 import { ExecutionReviewer } from './execution/reviewer.js';
@@ -183,14 +182,10 @@ async function main() {
   const pvgRotateDB = new PvgRotateDB(resolve('data/council.db'));
   const critiqueStore = new HumanCritiqueStore();
   const resetSnapshotDB = new ResetSnapshotDB(resolve('data/council.db'));
-  // v0.5.2 P1-B: instantiate FacilitatorAgent BEFORE DeliberationHandler so
-  // the inline-intervention hook can be wired into the handler's options.
-  // The agent still subscribes to deliberation.started / .ended on bus for
-  // history lifecycle; only the agent.responded path moved to inline call.
-  const facilitatorAgent = facilitatorWorker
-    ? new FacilitatorAgent(bus, facilitatorWorker)
-    : undefined;
-
+  // v0.5.2 P1-B: DeliberationHandler default-wires a FacilitatorAgent
+  // internally when given a facilitatorWorker, so we no longer construct
+  // one here. Constructing it externally AND passing facilitatorWorker
+  // would double-subscribe deliberation.started / .ended.
   const deliberationHandler = new DeliberationHandler(
     bus,
     peerWorkers,
@@ -204,14 +199,6 @@ async function main() {
       pvgRotateStore,
       critiqueStore,
       resetSnapshotDB,
-      facilitatorIntervention: facilitatorAgent
-        ? {
-            recordAgentResponse: (threadId, agentId, content) =>
-              facilitatorAgent.recordAgentResponse(threadId, agentId, content),
-            evaluateIntervention: (threadId) =>
-              facilitatorAgent.evaluateIntervention(threadId),
-          }
-        : undefined,
     },
   );
   console.log('DeliberationHandler initialized');
@@ -312,10 +299,10 @@ async function main() {
     void participationManager;
   }
 
-  // Facilitation layer log (instance was created above so DeliberationHandler
-  // could receive the inline-intervention hook — see v0.5.2 P1-B note).
-  if (facilitatorAgent) {
-    console.log('FacilitatorAgent initialized');
+  // Facilitation layer (default-wired inside DeliberationHandler when
+  // facilitatorWorker is configured — see v0.5.2 P1-B note above).
+  if (facilitatorWorker) {
+    console.log('FacilitatorAgent initialized (default-wired by DeliberationHandler)');
   }
 
   // Execution layer (if enabled)

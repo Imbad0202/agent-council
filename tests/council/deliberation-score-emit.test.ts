@@ -146,9 +146,14 @@ describe('DeliberationHandler — facilitator summary + collaboration score', ()
     await done;
 
     expect(facilitatorRespond).toHaveBeenCalled();
-    const summaryHistory = facilitatorRespond.mock.calls[0][0];
-    const summaryContent = summaryHistory[0].content;
-    // The summary prompt should reference either the level name or the phrase "協作深度"
-    expect(summaryContent).toMatch(/協作深度|surface|moderate|deep|transformative/);
+    // v0.5.2 P1-B: default-wired FacilitatorAgent now also makes mid-round
+    // evaluateIntervention calls before the round-end summary. Find the
+    // summary call (the one that prepends the score line / "協作深度") rather
+    // than assuming it is the first call.
+    const summaryCall = facilitatorRespond.mock.calls.find((call) => {
+      const history = call[0] as Array<{ content: string }>;
+      return /協作深度|surface|moderate|deep|transformative/.test(history[0]?.content ?? '');
+    });
+    expect(summaryCall).toBeDefined();
   });
 });

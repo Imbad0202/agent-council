@@ -23,6 +23,7 @@ import {
   type AdversarialDebriefRecord,
 } from './adversarial-provers.js';
 import { BlindReviewStore, buildScoringKeyboard } from './blind-review.js';
+import { FacilitatorAgent } from './facilitator.js';
 import { pickRandomAdversarialRole, buildRotationKeyboard } from './pvg-rotate.js';
 import { PvgRotateStore } from './pvg-rotate-store.js';
 import type { AdversarialRole } from './adversarial-provers.js';
@@ -149,7 +150,19 @@ export class DeliberationHandler {
     this.critiqueStore = options?.critiqueStore;
     this.critiqueTimeoutMs = options?.critiqueTimeoutMs ?? DEFAULT_CRITIQUE_TIMEOUT_MS;
     this.resetSnapshotDB = options?.resetSnapshotDB;
-    this.facilitatorIntervention = options?.facilitatorIntervention;
+    // v0.5.2 P1-B (codex round-1 finding): if a caller wires only
+    // facilitatorWorker (no explicit facilitatorIntervention), default-wire
+    // a FacilitatorAgent here so mid-round steer/challenge interventions
+    // still happen. Pre-fix, the listener-driven path made this automatic;
+    // requiring callers to opt in explicitly was a silent contract break
+    // for any handler built without going through src/index.ts (tests,
+    // future external consumers). Explicit hook still wins when both are
+    // provided.
+    this.facilitatorIntervention =
+      options?.facilitatorIntervention ??
+      (options?.facilitatorWorker
+        ? this.buildDefaultFacilitatorIntervention(bus, options.facilitatorWorker)
+        : undefined);
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
@@ -224,6 +237,21 @@ export class DeliberationHandler {
     this.bus.on('intent.classified', ({ message, threadId }) => {
       this.getSession(threadId).pendingClassifications.delete(message.id);
     });
+  }
+
+  private buildDefaultFacilitatorIntervention(
+    bus: EventBus,
+    facilitatorWorker: AgentWorker,
+  ): {
+    recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
+    evaluateIntervention: (threadId: number) => Promise<void>;
+  } {
+    const agent = new FacilitatorAgent(bus, facilitatorWorker);
+    return {
+      recordAgentResponse: (threadId, agentId, content) =>
+        agent.recordAgentResponse(threadId, agentId, content),
+      evaluateIntervention: (threadId) => agent.evaluateIntervention(threadId),
+    };
   }
 
   private getSession(threadId: number): SessionState {
