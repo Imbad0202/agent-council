@@ -29,7 +29,6 @@ import {
 import type { CritiqueUiAdapter } from './adapters/telegram.js';
 import type { DefaultCritiquePromptAdapter } from './adapters/cli.js';
 import type { SessionResetAdapter } from './adapters/telegram.js';
-import { FacilitatorAgent } from './council/facilitator.js';
 import { ActiveRecall } from './memory/active-recall.js';
 import { ExecutionDispatcher } from './execution/dispatcher.js';
 import { ExecutionReviewer } from './execution/reviewer.js';
@@ -183,6 +182,10 @@ async function main() {
   const pvgRotateDB = new PvgRotateDB(resolve('data/council.db'));
   const critiqueStore = new HumanCritiqueStore();
   const resetSnapshotDB = new ResetSnapshotDB(resolve('data/council.db'));
+  // v0.5.2 P1-B: DeliberationHandler default-wires a FacilitatorAgent
+  // internally when given a facilitatorWorker, so we no longer construct
+  // one here. Constructing it externally AND passing facilitatorWorker
+  // would double-subscribe deliberation.started / .ended.
   const deliberationHandler = new DeliberationHandler(
     bus,
     peerWorkers,
@@ -296,10 +299,10 @@ async function main() {
     void participationManager;
   }
 
-  // Facilitation layer (if facilitator config exists)
+  // Facilitation layer (default-wired inside DeliberationHandler when
+  // facilitatorWorker is configured — see v0.5.2 P1-B note above).
   if (facilitatorWorker) {
-    new FacilitatorAgent(bus, facilitatorWorker);
-    console.log('FacilitatorAgent initialized');
+    console.log('FacilitatorAgent initialized (default-wired by DeliberationHandler)');
   }
 
   // Execution layer (if enabled)

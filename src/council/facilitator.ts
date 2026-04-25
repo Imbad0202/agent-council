@@ -9,6 +9,25 @@ interface FacilitatorDecision {
   target_agent: string | null;
 }
 
+// v0.5.2 P1-B option C (codex round-3 [P1]): evaluateIntervention now
+// RETURNS the intervention decision instead of emitting it directly. The
+// caller (DeliberationHandler.runDeliberation) decides synchronously
+// whether to push the resulting facilitator message into currentMessages
+// AND emit the facilitator.intervened event for downstream broadcast.
+//
+// Why: the prior design emitted from inside the LLM callback. If the
+// caller's await timed out, the LLM call could still resolve in the
+// background and emit late, push'ing into a segment that /councilreset
+// had since sealed. By moving the emit to the caller, a timed-out
+// intervention produces NO emit and NO push — single ownership of the
+// "should this become part of the segment" decision lives in the
+// runDeliberation while-deliberationInFlight window.
+export interface FacilitatorInterventionResult {
+  action: FacilitatorAction;
+  content: string;
+  targetAgent?: string;
+}
+
 export class FacilitatorAgent {
   private bus: EventBus;
   private worker: AgentWorker;
@@ -24,30 +43,25 @@ export class FacilitatorAgent {
       this.announceStructure(payload.threadId, payload.participants, payload.structure);
     });
 
-    // On agent response: record and evaluate whether to intervene
-    this.bus.on('agent.responded', (payload) => {
-      const history = this.deliberationHistory.get(payload.threadId) ?? [];
-      history.push({
-        id: `${payload.agentId}-${Date.now()}`,
-        role: 'agent',
-        agentId: payload.agentId,
-        content: payload.response.content,
-        timestamp: Date.now(),
-        threadId: payload.threadId,
-      });
-      this.deliberationHistory.set(payload.threadId, history);
-      this.evaluateIntervention(payload.threadId);
-    });
+    // v0.5.2 P1-B fix: agent.responded → evaluateIntervention is now driven
+    // inline from DeliberationHandler.runDeliberation via the public
+    // recordAgentResponse() + evaluateIntervention() methods below. The
+    // listener path was racy because evaluateIntervention's LLM call could
+    // resolve AFTER deliberation.ended cleared deliberationInFlight, letting
+    // a /councilreset slip in and seal the segment before the late
+    // facilitator.intervened landed. Inline await keeps the work inside the
+    // in-flight window so the reset guard sees it. See round-12 P1-B in
+    // memory-sync project_agent_council_v051_session_reset.md.
 
-    // On convergence: decide to challenge or allow
-    this.bus.on('convergence.detected', (payload) => {
-      this.handleConvergence(payload.threadId, payload.angle);
-    });
-
-    // On pattern: issue targeted guidance directly (no LLM call)
-    this.bus.on('pattern.detected', (payload) => {
-      this.handlePattern(payload.threadId, payload.targetAgent, payload.pattern);
-    });
+    // v0.5.2 P1-B option C (codex round-4 [P2]): convergence.detected and
+    // pattern.detected listeners removed. The methods themselves now return
+    // FacilitatorInterventionResult | null (see handleConvergence /
+    // handlePattern below). When either trigger is re-enabled, the trigger
+    // site MUST call the method directly and route the returned decision
+    // through DeliberationHandler's inline path so the resulting message
+    // both broadcasts AND enters currentMessages. Re-subscribing here would
+    // reintroduce the broadcast-without-history mismatch that prompted the
+    // option-C refactor.
 
     // Clean up history on deliberation end
     this.bus.on('deliberation.ended', (payload) => {
@@ -66,11 +80,33 @@ export class FacilitatorAgent {
     });
   }
 
-  private async evaluateIntervention(threadId: number): Promise<void> {
+  // Public so DeliberationHandler can record + evaluate inline within
+  // runDeliberation (v0.5.2 P1-B fix). Caller pattern:
+  //   facilitator.recordAgentResponse(threadId, agentId, content);
+  //   await facilitator.evaluateIntervention(threadId);
+  // recordAgentResponse stays separate from evaluateIntervention so callers
+  // that only want to seed history (tests, future replay tooling) do not
+  // pay for an LLM call.
+  public recordAgentResponse(threadId: number, agentId: string, content: string): void {
+    const history = this.deliberationHistory.get(threadId) ?? [];
+    history.push({
+      id: `${agentId}-${Date.now()}`,
+      role: 'agent',
+      agentId,
+      content,
+      timestamp: Date.now(),
+      threadId,
+    });
+    this.deliberationHistory.set(threadId, history);
+  }
+
+  public async evaluateIntervention(
+    threadId: number,
+  ): Promise<FacilitatorInterventionResult | null> {
     const history = this.deliberationHistory.get(threadId) ?? [];
 
     // Only evaluate after 2+ messages
-    if (history.length < 2) return;
+    if (history.length < 2) return null;
 
     const transcript = history
       .map((m) => `${m.agentId ?? 'Agent'}: ${m.content}`)
@@ -87,21 +123,36 @@ export class FacilitatorAgent {
     try {
       const response = await this.worker.respond([evalMessage], 'synthesizer');
       const decision = this.parseDecision(response.content);
-
-      if (decision.action !== 'none') {
-        this.bus.emit('facilitator.intervened', {
-          threadId,
-          action: decision.action as FacilitatorAction,
-          content: decision.content,
-          ...(decision.target_agent ? { targetAgent: decision.target_agent } : {}),
-        });
-      }
+      if (decision.action === 'none') return null;
+      return {
+        action: decision.action as FacilitatorAction,
+        content: decision.content,
+        ...(decision.target_agent ? { targetAgent: decision.target_agent } : {}),
+      };
     } catch {
       // Evaluation failed — skip intervention silently
+      return null;
     }
   }
 
-  private async handleConvergence(threadId: number, angle: string): Promise<void> {
+  // v0.5.2 P1-B option C (codex round-4 [P2]): handleConvergence and
+  // handlePattern previously emitted facilitator.intervened directly.
+  // Under option C the listener that pushed those events into
+  // currentMessages is gone, so a direct emit would broadcast to Telegram
+  // but never persist in the transcript — the next agent would never see
+  // the convergence challenge, silently disabling the steering.
+  //
+  // Both convergence.detected and pattern.detected currently have no live
+  // emitters in the codebase (grep -rn "emit.*convergence.detected" /
+  // "emit.*pattern.detected"), so this is dormant code. When either is
+  // re-enabled, the trigger site MUST call these methods and route the
+  // returned decision through the same inline path as evaluateIntervention.
+  // Returning null without emitting keeps the event-bus quiet so we don't
+  // leak orphan broadcasts.
+  public async handleConvergence(
+    threadId: number,
+    angle: string,
+  ): Promise<FacilitatorInterventionResult | null> {
     const convergenceMessage: CouncilMessage = {
       id: `facilitator-convergence-${Date.now()}`,
       role: 'human',
@@ -113,29 +164,30 @@ export class FacilitatorAgent {
     try {
       const response = await this.worker.respond([convergenceMessage], 'synthesizer');
       const decision = this.parseDecision(response.content);
-
-      if (decision.action !== 'none') {
-        this.bus.emit('facilitator.intervened', {
-          threadId,
-          action: decision.action as FacilitatorAction,
-          content: decision.content,
-          ...(decision.target_agent ? { targetAgent: decision.target_agent } : {}),
-        });
-      }
+      if (decision.action === 'none') return null;
+      return {
+        action: decision.action as FacilitatorAction,
+        content: decision.content,
+        ...(decision.target_agent ? { targetAgent: decision.target_agent } : {}),
+      };
     } catch {
       // Convergence handling failed — skip silently
+      return null;
     }
   }
 
-  private handlePattern(threadId: number, targetAgent: string, pattern: PatternType): void {
+  public handlePattern(
+    threadId: number,
+    targetAgent: string,
+    pattern: PatternType,
+  ): FacilitatorInterventionResult {
+    void threadId; // reserved for future telemetry / history correlation
     const content = PATTERN_INJECTION_PROMPTS[pattern];
-
-    this.bus.emit('facilitator.intervened', {
-      threadId,
+    return {
       action: 'challenge',
       content,
       targetAgent,
-    });
+    };
   }
 
   private parseDecision(responseContent: string): FacilitatorDecision {

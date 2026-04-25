@@ -212,49 +212,101 @@ describe('DeliberationHandler', () => {
     expect(challengePrompt).toBeTruthy();
   });
 
-  it('adds facilitator message to history from facilitator.intervened', async () => {
-    // Run a deliberation first to create session
-    const done1 = new Promise<void>((resolve) => {
-      bus.on('deliberation.ended', () => resolve());
+  it('adds facilitator message to history via inline intervention path', async () => {
+    // v0.5.2 P1-B option C: facilitator messages now enter currentMessages
+    // ONLY through the inline path in runDeliberation, not via the
+    // facilitator.intervened listener. The listener was the legacy race
+    // source; this test validates the new contract by injecting a
+    // facilitatorIntervention hook that returns a steer decision after the
+    // first agent responds, then verifying agent-b receives that
+    // facilitator message in its history on the next call.
+    const localBus = new EventBus();
+    const localWorkers = [
+      makeWorker('agent-a', 'Agent A'),
+      makeWorker('agent-b', 'Agent B'),
+    ];
+    const localSend = vi.fn().mockResolvedValue(undefined);
+
+    let evalCallCount = 0;
+    const interventionHook = {
+      recordAgentResponse: vi.fn(),
+      evaluateIntervention: vi.fn(async () => {
+        evalCallCount += 1;
+        // Only intervene after the FIRST agent (so agent-b sees the
+        // facilitator message in its turn history).
+        if (evalCallCount === 1) {
+          return {
+            action: 'steer' as const,
+            content: 'Let us focus on the practical implications.',
+          };
+        }
+        return null;
+      }),
+    };
+
+    new DeliberationHandler(localBus, localWorkers, minConfig, localSend, {
+      facilitatorIntervention: interventionHook,
     });
 
-    bus.emit('intent.classified', {
+    const done = new Promise<void>((resolve) => {
+      localBus.on('deliberation.ended', () => resolve());
+    });
+    localBus.emit('intent.classified', {
       intent: 'deliberation',
       complexity: 'low',
       threadId: 20,
       message: makeMessage('Initial topic', 20),
     });
-    await done1;
+    await done;
 
-    // Emit facilitator.intervened
-    bus.emit('facilitator.intervened', {
-      threadId: 20,
-      action: 'steer',
-      content: 'Let us focus on the practical implications.',
-    });
-
-    // Give a tick for the handler to process
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    // Run another deliberation — history should include facilitator message
-    const done2 = new Promise<void>((resolve) => {
-      bus.on('deliberation.ended', () => resolve());
-    });
-
-    bus.emit('intent.classified', {
-      intent: 'deliberation',
-      complexity: 'low',
-      threadId: 20,
-      message: makeMessage('Follow-up question', 20),
-    });
-    await done2;
-
-    // Check that workers received history containing the facilitator message
-    const respondMock = workers[0].respond as ReturnType<typeof vi.fn>;
-    const historyArg = respondMock.mock.calls[1][0] as CouncilMessage[];
+    // Agent-b's history (mock.calls[0] for agent-b worker) should include
+    // the facilitator message pushed inline after agent-a's response.
+    const respondMockB = localWorkers[1].respond as ReturnType<typeof vi.fn>;
+    const historyArg = respondMockB.mock.calls[0][0] as CouncilMessage[];
     const facilitatorMsg = historyArg.find((m) => m.agentId === 'facilitator');
     expect(facilitatorMsg).toBeDefined();
     expect(facilitatorMsg!.content).toBe('Let us focus on the practical implications.');
+  });
+
+  it('facilitator.intervened listener no longer pushes to currentMessages (race fix)', async () => {
+    // v0.5.2 P1-B option C: external bus.emit('facilitator.intervened')
+    // must NOT mutate session state. This test pins the new contract.
+    const done1 = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', () => resolve());
+    });
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'low',
+      threadId: 21,
+      message: makeMessage('Initial topic', 21),
+    });
+    await done1;
+
+    // External emit — pre-fix this would have pushed into currentMessages
+    // and contaminated the next round. Post-fix it's only consumed by
+    // router-level broadcast.
+    bus.emit('facilitator.intervened', {
+      threadId: 21,
+      action: 'steer',
+      content: 'Late ghost message — must NOT enter currentMessages.',
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const done2 = new Promise<void>((resolve) => {
+      bus.on('deliberation.ended', () => resolve());
+    });
+    bus.emit('intent.classified', {
+      intent: 'deliberation',
+      complexity: 'low',
+      threadId: 21,
+      message: makeMessage('Follow-up', 21),
+    });
+    await done2;
+
+    const respondMock = workers[0].respond as ReturnType<typeof vi.fn>;
+    const historyArg = respondMock.mock.calls[1][0] as CouncilMessage[];
+    const ghost = historyArg.find((m) => m.content?.includes('Late ghost message'));
+    expect(ghost).toBeUndefined();
   });
 });
 

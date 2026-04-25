@@ -23,6 +23,8 @@ import {
   type AdversarialDebriefRecord,
 } from './adversarial-provers.js';
 import { BlindReviewStore, buildScoringKeyboard } from './blind-review.js';
+import { FacilitatorAgent } from './facilitator.js';
+import type { FacilitatorInterventionResult } from './facilitator.js';
 import { pickRandomAdversarialRole, buildRotationKeyboard } from './pvg-rotate.js';
 import { PvgRotateStore } from './pvg-rotate-store.js';
 import type { AdversarialRole } from './adversarial-provers.js';
@@ -32,6 +34,25 @@ import { buildCritiquePrompt } from './human-critique-prompts.js';
 import { scoreSession, type DepthScoreResult } from './collaboration-depth.js';
 
 const DEFAULT_CRITIQUE_TIMEOUT_MS = 30_000;
+
+// v0.5.2 P1-B (codex round-2 [P1]): mid-round facilitator interventions
+// were a fire-and-forget listener pre-fix; awaiting them inline made the
+// hot path block on the facilitator provider. If the provider stalls, we
+// must NOT wedge the round — intervention is best-effort. Time out
+// individually and continue the loop. Matches the critique-timeout
+// posture (also user-controllable indirectly via facilitator's own
+// provider config).
+const DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS = 30_000;
+
+function raceWithTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(msg)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 const HUMAN_SENTINEL = '__human__';
 
 interface CritiqueRecordInternal {
@@ -87,6 +108,12 @@ export class DeliberationHandler {
   private critiqueStore: HumanCritiqueStore | undefined;
   private critiqueTimeoutMs: number;
   private resetSnapshotDB: ResetSnapshotDB | undefined;
+  private facilitatorIntervention:
+    | {
+        recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
+        evaluateIntervention: (threadId: number) => Promise<FacilitatorInterventionResult | null>;
+      }
+    | undefined;
   private sessions: Map<number, SessionState> = new Map();
 
   public getBlindReviewStore(): BlindReviewStore {
@@ -120,6 +147,17 @@ export class DeliberationHandler {
       critiqueStore?: HumanCritiqueStore;
       critiqueTimeoutMs?: number;
       resetSnapshotDB?: ResetSnapshotDB;
+      // v0.5.2 P1-B: optional facilitator-driven intervention hook. When set,
+      // runDeliberation calls these inline after every agent.responded emit so
+      // the LLM call resolves WITHIN the deliberationInFlight window. Narrow
+      // interface (not the FacilitatorAgent class) so tests can stub without
+      // wiring the full agent. Both methods are optional individually for the
+      // same reason — recordAgentResponse without evaluateIntervention is a
+      // no-op-equivalent that still satisfies the contract.
+      facilitatorIntervention?: {
+        recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
+        evaluateIntervention: (threadId: number) => Promise<FacilitatorInterventionResult | null>;
+      };
     },
   ) {
     this.bus = bus;
@@ -132,6 +170,30 @@ export class DeliberationHandler {
     this.critiqueStore = options?.critiqueStore;
     this.critiqueTimeoutMs = options?.critiqueTimeoutMs ?? DEFAULT_CRITIQUE_TIMEOUT_MS;
     this.resetSnapshotDB = options?.resetSnapshotDB;
+    // v0.5.2 P1-B (codex rounds 1-2):
+    // - Round-1: a caller wiring only facilitatorWorker silently lost
+    //   mid-round steer/challenge interventions when the agent.responded
+    //   listener was removed.
+    // - Round-2 [P2]: even after default-wiring the hook from
+    //   facilitatorWorker, if the caller also supplies an explicit
+    //   facilitatorIntervention we MUST still create the FacilitatorAgent
+    //   so the other listeners (deliberation.started structure announce,
+    //   pattern.detected, convergence.detected, deliberation.ended history
+    //   cleanup) keep working. Otherwise a "narrow override" silently
+    //   disables four unrelated facilitator behaviors.
+    // Always instantiate when facilitatorWorker is present; the explicit
+    // hook only overrides the mid-round intervention path.
+    if (options?.facilitatorWorker) {
+      const agent = new FacilitatorAgent(bus, options.facilitatorWorker);
+      this.facilitatorIntervention =
+        options.facilitatorIntervention ?? {
+          recordAgentResponse: (threadId, agentId, content) =>
+            agent.recordAgentResponse(threadId, agentId, content),
+          evaluateIntervention: (threadId) => agent.evaluateIntervention(threadId),
+        };
+    } else {
+      this.facilitatorIntervention = options?.facilitatorIntervention;
+    }
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
@@ -139,27 +201,23 @@ export class DeliberationHandler {
       this.runDeliberation(payload.threadId, payload.message, payload.intent, payload.complexity);
     });
 
-    // Subscribe to facilitator.intervened — only add non-structure messages to history
-    // Structure announcements (opening messages) are display-only, not part of deliberation context
-    this.bus.on('facilitator.intervened', (payload) => {
-      if (payload.action === 'structure') return;
-
-      const session = this.sessions.get(payload.threadId);
-      if (!session) return;
-
-      const facilitatorMsg: CouncilMessage = {
-        id: `facilitator-${Date.now()}`,
-        role: 'agent',
-        agentId: 'facilitator',
-        content: payload.content,
-        timestamp: Date.now(),
-        threadId: payload.threadId,
-        metadata: {
-          assignedRole: 'synthesizer',
-        },
-      };
-      this.currentMessages(session).push(facilitatorMsg);
-    });
+    // v0.5.2 P1-B option C (codex round-3 [P1]): the facilitator.intervened
+    // listener used to push facilitator messages into currentMessages. That
+    // was the last surviving "async listener mutates session state" path —
+    // and even with the round-2 timeout swallow, a slow LLM call could still
+    // resolve in the background, emit facilitator.intervened, and have the
+    // listener push into a segment that /councilreset had since sealed.
+    //
+    // The fix: ALL writes to currentMessages from facilitator interventions
+    // now go through the inline path in runDeliberation, which executes
+    // synchronously while deliberationInFlight is true. Late LLM emits
+    // (post-timeout, post-deliberation.ended) reach the bus but no listener
+    // pushes them into segments. Router still listens for downstream
+    // broadcast (router.ts) — that's harmless display-only side-effect.
+    //
+    // 'structure' announcements from FacilitatorAgent.announceStructure are
+    // also display-only — they were already filtered out here, so dropping
+    // the listener loses no behaviour for them.
 
     // Subscribe to pattern.detected — store pending injection
     this.bus.on('pattern.detected', (payload) => {
@@ -710,6 +768,76 @@ export class DeliberationHandler {
           role,
           classification,
         });
+
+        // v0.5.2 P1-B option C: drive facilitator intervention inline AND
+        // push the result into currentMessages from this synchronous flow.
+        // evaluateIntervention now RETURNS the decision instead of emitting
+        // it from inside the LLM callback. That means a late LLM resolution
+        // (post-timeout, post-deliberation.ended) cannot push into a sealed
+        // segment — there is no listener that would do the push, and the
+        // caller already moved on. Single-owner mutation: this block is the
+        // only place facilitator messages enter currentMessages.
+        if (this.facilitatorIntervention) {
+          // Wrap both hook calls so a custom implementation that throws
+          // synchronously (e.g. a non-async evaluateIntervention or a
+          // recordAgentResponse that throws) cannot wedge the round
+          // before the .catch on raceWithTimeout has a chance to fire.
+          // (codex round-4 [P3])
+          try {
+            this.facilitatorIntervention.recordAgentResponse(
+              threadId,
+              worker.id,
+              storedContent,
+            );
+          } catch (err) {
+            console.error(
+              `[deliberation] facilitator recordAgentResponse threw for thread ${threadId}:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+
+          // Time-bound the intervention so a hung facilitator provider
+          // can't wedge the deliberation loop. Errors and timeouts are
+          // both swallowed with a console warning — intervention is
+          // best-effort, the round must finish. Promise.resolve().then()
+          // normalises sync throws from a non-async hook implementation
+          // into rejected promises so .catch() handles both paths.
+          const intervention = await raceWithTimeout(
+            Promise.resolve().then(() =>
+              this.facilitatorIntervention!.evaluateIntervention(threadId),
+            ),
+            DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS,
+            `facilitator intervention timed out after ${DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS}ms`,
+          ).catch((err) => {
+            console.error(
+              `[deliberation] mid-round facilitator intervention failed for thread ${threadId}, agent ${worker.id}:`,
+              err instanceof Error ? err.message : err,
+            );
+            return null;
+          });
+
+          if (intervention) {
+            // Push to currentMessages first so the next agent in the loop
+            // sees the intervention as part of context, then emit for
+            // router / Telegram broadcast.
+            const facilitatorMsg: CouncilMessage = {
+              id: `facilitator-${Date.now()}`,
+              role: 'agent',
+              agentId: 'facilitator',
+              content: intervention.content,
+              timestamp: Date.now(),
+              threadId,
+              metadata: { assignedRole: 'synthesizer' },
+            };
+            this.currentMessages(session).push(facilitatorMsg);
+            this.bus.emit('facilitator.intervened', {
+              threadId,
+              action: intervention.action,
+              content: intervention.content,
+              ...(intervention.targetAgent ? { targetAgent: intervention.targetAgent } : {}),
+            });
+          }
+        }
       }
 
       const responseForStorage =
