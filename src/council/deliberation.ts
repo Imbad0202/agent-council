@@ -87,6 +87,12 @@ export class DeliberationHandler {
   private critiqueStore: HumanCritiqueStore | undefined;
   private critiqueTimeoutMs: number;
   private resetSnapshotDB: ResetSnapshotDB | undefined;
+  private facilitatorIntervention:
+    | {
+        recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
+        evaluateIntervention: (threadId: number) => Promise<void>;
+      }
+    | undefined;
   private sessions: Map<number, SessionState> = new Map();
 
   public getBlindReviewStore(): BlindReviewStore {
@@ -120,6 +126,17 @@ export class DeliberationHandler {
       critiqueStore?: HumanCritiqueStore;
       critiqueTimeoutMs?: number;
       resetSnapshotDB?: ResetSnapshotDB;
+      // v0.5.2 P1-B: optional facilitator-driven intervention hook. When set,
+      // runDeliberation calls these inline after every agent.responded emit so
+      // the LLM call resolves WITHIN the deliberationInFlight window. Narrow
+      // interface (not the FacilitatorAgent class) so tests can stub without
+      // wiring the full agent. Both methods are optional individually for the
+      // same reason — recordAgentResponse without evaluateIntervention is a
+      // no-op-equivalent that still satisfies the contract.
+      facilitatorIntervention?: {
+        recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
+        evaluateIntervention: (threadId: number) => Promise<void>;
+      };
     },
   ) {
     this.bus = bus;
@@ -132,6 +149,7 @@ export class DeliberationHandler {
     this.critiqueStore = options?.critiqueStore;
     this.critiqueTimeoutMs = options?.critiqueTimeoutMs ?? DEFAULT_CRITIQUE_TIMEOUT_MS;
     this.resetSnapshotDB = options?.resetSnapshotDB;
+    this.facilitatorIntervention = options?.facilitatorIntervention;
 
     // Subscribe to intent.classified — skip 'meta' intent
     this.bus.on('intent.classified', (payload) => {
@@ -710,6 +728,24 @@ export class DeliberationHandler {
           role,
           classification,
         });
+
+        // v0.5.2 P1-B: drive facilitator intervention inline (was an
+        // async listener on agent.responded inside FacilitatorAgent —
+        // racy because the LLM call could resolve after deliberation.ended
+        // cleared deliberationInFlight, letting /councilreset seal the
+        // segment before the late facilitator.intervened landed). Awaiting
+        // here keeps the work inside the in-flight window so the reset
+        // guard sees it. evaluateIntervention internally emits the
+        // facilitator.intervened event for downstream consumers (router
+        // broadcasts to Telegram, listener pushes to currentMessages).
+        if (this.facilitatorIntervention) {
+          this.facilitatorIntervention.recordAgentResponse(
+            threadId,
+            worker.id,
+            storedContent,
+          );
+          await this.facilitatorIntervention.evaluateIntervention(threadId);
+        }
       }
 
       const responseForStorage =

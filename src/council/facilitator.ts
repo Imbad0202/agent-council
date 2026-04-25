@@ -24,20 +24,15 @@ export class FacilitatorAgent {
       this.announceStructure(payload.threadId, payload.participants, payload.structure);
     });
 
-    // On agent response: record and evaluate whether to intervene
-    this.bus.on('agent.responded', (payload) => {
-      const history = this.deliberationHistory.get(payload.threadId) ?? [];
-      history.push({
-        id: `${payload.agentId}-${Date.now()}`,
-        role: 'agent',
-        agentId: payload.agentId,
-        content: payload.response.content,
-        timestamp: Date.now(),
-        threadId: payload.threadId,
-      });
-      this.deliberationHistory.set(payload.threadId, history);
-      this.evaluateIntervention(payload.threadId);
-    });
+    // v0.5.2 P1-B fix: agent.responded → evaluateIntervention is now driven
+    // inline from DeliberationHandler.runDeliberation via the public
+    // recordAgentResponse() + evaluateIntervention() methods below. The
+    // listener path was racy because evaluateIntervention's LLM call could
+    // resolve AFTER deliberation.ended cleared deliberationInFlight, letting
+    // a /councilreset slip in and seal the segment before the late
+    // facilitator.intervened landed. Inline await keeps the work inside the
+    // in-flight window so the reset guard sees it. See round-12 P1-B in
+    // memory-sync project_agent_council_v051_session_reset.md.
 
     // On convergence: decide to challenge or allow
     this.bus.on('convergence.detected', (payload) => {
@@ -66,7 +61,27 @@ export class FacilitatorAgent {
     });
   }
 
-  private async evaluateIntervention(threadId: number): Promise<void> {
+  // Public so DeliberationHandler can record + evaluate inline within
+  // runDeliberation (v0.5.2 P1-B fix). Caller pattern:
+  //   facilitator.recordAgentResponse(threadId, agentId, content);
+  //   await facilitator.evaluateIntervention(threadId);
+  // recordAgentResponse stays separate from evaluateIntervention so callers
+  // that only want to seed history (tests, future replay tooling) do not
+  // pay for an LLM call.
+  public recordAgentResponse(threadId: number, agentId: string, content: string): void {
+    const history = this.deliberationHistory.get(threadId) ?? [];
+    history.push({
+      id: `${agentId}-${Date.now()}`,
+      role: 'agent',
+      agentId,
+      content,
+      timestamp: Date.now(),
+      threadId,
+    });
+    this.deliberationHistory.set(threadId, history);
+  }
+
+  public async evaluateIntervention(threadId: number): Promise<void> {
     const history = this.deliberationHistory.get(threadId) ?? [];
 
     // Only evaluate after 2+ messages

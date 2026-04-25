@@ -183,6 +183,14 @@ async function main() {
   const pvgRotateDB = new PvgRotateDB(resolve('data/council.db'));
   const critiqueStore = new HumanCritiqueStore();
   const resetSnapshotDB = new ResetSnapshotDB(resolve('data/council.db'));
+  // v0.5.2 P1-B: instantiate FacilitatorAgent BEFORE DeliberationHandler so
+  // the inline-intervention hook can be wired into the handler's options.
+  // The agent still subscribes to deliberation.started / .ended on bus for
+  // history lifecycle; only the agent.responded path moved to inline call.
+  const facilitatorAgent = facilitatorWorker
+    ? new FacilitatorAgent(bus, facilitatorWorker)
+    : undefined;
+
   const deliberationHandler = new DeliberationHandler(
     bus,
     peerWorkers,
@@ -196,6 +204,14 @@ async function main() {
       pvgRotateStore,
       critiqueStore,
       resetSnapshotDB,
+      facilitatorIntervention: facilitatorAgent
+        ? {
+            recordAgentResponse: (threadId, agentId, content) =>
+              facilitatorAgent.recordAgentResponse(threadId, agentId, content),
+            evaluateIntervention: (threadId) =>
+              facilitatorAgent.evaluateIntervention(threadId),
+          }
+        : undefined,
     },
   );
   console.log('DeliberationHandler initialized');
@@ -296,9 +312,9 @@ async function main() {
     void participationManager;
   }
 
-  // Facilitation layer (if facilitator config exists)
-  if (facilitatorWorker) {
-    new FacilitatorAgent(bus, facilitatorWorker);
+  // Facilitation layer log (instance was created above so DeliberationHandler
+  // could receive the inline-intervention hook — see v0.5.2 P1-B note).
+  if (facilitatorAgent) {
     console.log('FacilitatorAgent initialized');
   }
 

@@ -49,7 +49,7 @@ describe('FacilitatorAgent', () => {
       expect(events[0].content).toBeTruthy();
     });
 
-    it('initializes history for the thread on deliberation.started', async () => {
+    it('initializes history for the thread on deliberation.started; <2 messages → no worker call', async () => {
       worker = makeWorker('{"action": "none", "content": "", "target_agent": null}');
       _facilitator = new FacilitatorAgent(bus, worker);
 
@@ -62,25 +62,21 @@ describe('FacilitatorAgent', () => {
 
       await new Promise((r) => setTimeout(r, 10));
 
-      // Now emit agent.responded — should not call worker (only 1 message in history after adding)
-      // Actually after deliberation.started, history is empty. After first agent.responded it becomes 1 message.
-      // evaluateIntervention requires 2+, so no respond() call expected yet.
-      bus.emit('agent.responded', {
-        threadId: 42,
-        agentId: 'huahua',
-        response: { content: 'First response', tokensUsed: { input: 10, output: 10 } },
-        role: 'advocate',
-        classification: 'opposition',
-      });
+      // Caller records first agent response then evaluates — only 1 message
+      // in history, so the < 2 guard inside evaluateIntervention skips the
+      // worker call.
+      _facilitator.recordAgentResponse(42, 'huahua', 'First response');
+      await _facilitator.evaluateIntervention(42);
 
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Only 1 message in history → worker.respond should NOT have been called
       expect(worker.respond as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     });
   });
 
   describe('agent.responded → evaluateIntervention', () => {
+    // v0.5.2 P1-B: facilitator no longer subscribes to agent.responded.
+    // Caller (DeliberationHandler.runDeliberation) drives recordAgentResponse
+    // + evaluateIntervention inline. These tests exercise the public API
+    // directly, mirroring what the caller does.
     it('calls worker.respond after 2+ messages in history', async () => {
       worker = makeWorker('{"action": "none", "content": "", "target_agent": null}');
       _facilitator = new FacilitatorAgent(bus, worker);
@@ -94,27 +90,15 @@ describe('FacilitatorAgent', () => {
       await new Promise((r) => setTimeout(r, 10));
 
       // First agent response — history becomes 1
-      bus.emit('agent.responded', {
-        threadId: 5,
-        agentId: 'huahua',
-        response: { content: 'Response A', tokensUsed: { input: 10, output: 10 } },
-        role: 'advocate',
-        classification: 'opposition',
-      });
-      await new Promise((r) => setTimeout(r, 10));
+      _facilitator.recordAgentResponse(5, 'huahua', 'Response A');
+      await _facilitator.evaluateIntervention(5);
 
       // Should not have called worker.respond yet (only 1 message)
       expect(worker.respond as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
 
       // Second agent response — history becomes 2
-      bus.emit('agent.responded', {
-        threadId: 5,
-        agentId: 'binbin',
-        response: { content: 'Response B', tokensUsed: { input: 10, output: 10 } },
-        role: 'critic',
-        classification: 'agreement',
-      });
-      await new Promise((r) => setTimeout(r, 10));
+      _facilitator.recordAgentResponse(5, 'binbin', 'Response B');
+      await _facilitator.evaluateIntervention(5);
 
       // Now worker.respond SHOULD have been called
       expect(worker.respond as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
@@ -138,24 +122,10 @@ describe('FacilitatorAgent', () => {
       // structure intervened already captured
       const structureCount = interventions.length;
 
-      // Add 2 agent responses to trigger evaluateIntervention
-      bus.emit('agent.responded', {
-        threadId: 7,
-        agentId: 'huahua',
-        response: { content: 'I think we should go with microservices.', tokensUsed: { input: 10, output: 10 } },
-        role: 'advocate',
-        classification: 'conditional',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      bus.emit('agent.responded', {
-        threadId: 7,
-        agentId: 'binbin',
-        response: { content: 'I agree, microservices are great!', tokensUsed: { input: 10, output: 10 } },
-        role: 'critic',
-        classification: 'agreement',
-      });
-      await new Promise((r) => setTimeout(r, 50));
+      // Caller drives both inline (was: bus.emit('agent.responded', ...))
+      _facilitator.recordAgentResponse(7, 'huahua', 'I think we should go with microservices.');
+      _facilitator.recordAgentResponse(7, 'binbin', 'I agree, microservices are great!');
+      await _facilitator.evaluateIntervention(7);
 
       // Should have emitted a new facilitator.intervened with steer
       const newInterventions = interventions.slice(structureCount);
@@ -182,23 +152,9 @@ describe('FacilitatorAgent', () => {
 
       const structureCount = interventions.length;
 
-      bus.emit('agent.responded', {
-        threadId: 8,
-        agentId: 'huahua',
-        response: { content: 'Response 1', tokensUsed: { input: 10, output: 10 } },
-        role: 'advocate',
-        classification: 'opposition',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      bus.emit('agent.responded', {
-        threadId: 8,
-        agentId: 'binbin',
-        response: { content: 'Response 2', tokensUsed: { input: 10, output: 10 } },
-        role: 'critic',
-        classification: 'conditional',
-      });
-      await new Promise((r) => setTimeout(r, 50));
+      _facilitator.recordAgentResponse(8, 'huahua', 'Response 1');
+      _facilitator.recordAgentResponse(8, 'binbin', 'Response 2');
+      await _facilitator.evaluateIntervention(8);
 
       // No new interventions (worker returns none)
       const newInterventions = interventions.slice(structureCount);
@@ -222,23 +178,9 @@ describe('FacilitatorAgent', () => {
 
       const structureCount = interventions.length;
 
-      bus.emit('agent.responded', {
-        threadId: 9,
-        agentId: 'huahua',
-        response: { content: 'A response', tokensUsed: { input: 10, output: 10 } },
-        role: 'advocate',
-        classification: 'opposition',
-      });
-      await new Promise((r) => setTimeout(r, 10));
-
-      bus.emit('agent.responded', {
-        threadId: 9,
-        agentId: 'binbin',
-        response: { content: 'Another response', tokensUsed: { input: 10, output: 10 } },
-        role: 'critic',
-        classification: 'agreement',
-      });
-      await new Promise((r) => setTimeout(r, 50));
+      _facilitator.recordAgentResponse(9, 'huahua', 'A response');
+      _facilitator.recordAgentResponse(9, 'binbin', 'Another response');
+      await _facilitator.evaluateIntervention(9);
 
       const newInterventions = interventions.slice(structureCount);
       expect(newInterventions).toHaveLength(1);
