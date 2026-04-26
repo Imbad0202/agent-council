@@ -106,6 +106,9 @@ describe('/councildone flow — happy path + cache invariants', () => {
 
     // /councildone → artifact #1 on segment 0.
     const artifact1 = await artifactService.synthesize(THREAD, 'universal');
+    // Spec §11 5b: the FIRST artifact pins to segment_index 0 (no prior seals
+    // in either reset_snapshots or council_artifacts). Exact equality matters
+    // because the next assertion below derives from this baseline.
     expect(artifact1.segment_index).toBe(0);
     const firstCallCount = vi.mocked(bundle.synthProvider.provider.chat).mock.calls.length;
 
@@ -121,8 +124,13 @@ describe('/councildone flow — happy path + cache invariants', () => {
     // /councildone again — must NOT return cached artifact from segment 0.
     const artifact2 = await artifactService.synthesize(THREAD, 'universal');
 
-    // New artifact has a HIGHER segment_index.
-    expect(artifact2.segment_index).toBeGreaterThan(artifact1.segment_index);
+    // Spec §11 5b: cross-table monotonic counter. The second /councildone
+    // must read BOTH the artifact table ([0]) AND the reset_snapshots table
+    // ([1]) and produce max + 1 = 2. Asserting exact equality (not >) catches
+    // future drift in computeNextSegmentIndex — e.g. if the reset path
+    // regressed to segments.length-1, segment_index could come out 1 instead
+    // of 2 and a `>` test would still pass.
+    expect(artifact2.segment_index).toBe(2);
 
     // Provider was called again (not cached).
     const secondCallCount = vi.mocked(bundle.synthProvider.provider.chat).mock.calls.length;
@@ -149,6 +157,13 @@ describe('/councildone flow — happy path + cache invariants', () => {
     // First /councildone → synthesizes + seals.
     const artifact1 = await artifactService.synthesize(THREAD, 'universal');
     const callsAfterFirst = vi.mocked(bundle.synthProvider.provider.chat).mock.calls.length;
+
+    // Spec §11 invariant 5: the first synthesis is exactly ONE provider
+    // invocation. Asserting only "second call adds zero" would mask a
+    // regression where invokeWithRetry silently retried a transient failure
+    // (callsAfterFirst could become 2, and `secondCount === firstCount`
+    // would still pass). Exact equality pins the spec contract.
+    expect(callsAfterFirst).toBe(1);
 
     // Second /councildone — no new messages since the last seal.
     const artifact2 = await artifactService.synthesize(THREAD, 'universal');
