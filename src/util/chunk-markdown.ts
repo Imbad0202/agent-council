@@ -10,19 +10,23 @@
  * Empty input returns [] (NOT [''])
  */
 export function chunkMarkdown(text: string, maxChars: number): string[] {
+  if (maxChars <= 0) throw new RangeError('maxChars must be positive');
   if (text.length === 0) return [];
   if (text.length <= maxChars) return [text];
 
   const paraIdx = text.lastIndexOf('\n\n', maxChars);
-  if (paraIdx > 0) {
+  if (paraIdx >= 0) {
     const head = text.slice(0, paraIdx);
     const tail = text.slice(paraIdx + 2);
-    return [head, ...chunkMarkdown(tail, maxChars)];
+    if (head.length > 0) return [head, ...chunkMarkdown(tail, maxChars)];
+    // paraIdx === 0: leading \n\n — skip the separator, recurse on remainder
+    return chunkMarkdown(tail, maxChars);
   }
 
-  const wsMatch = text.slice(0, maxChars).match(/\s(?=\S*$)/);
-  if (wsMatch && wsMatch.index !== undefined && wsMatch.index > 0) {
-    const splitAt = wsMatch.index;
+  // Last whitespace in the window: \s where only non-whitespace follows to end
+  const lastWsMatch = text.slice(0, maxChars).match(/\s(?=\S*$)/);
+  if (lastWsMatch && lastWsMatch.index !== undefined && lastWsMatch.index > 0) {
+    const splitAt = lastWsMatch.index;
     const head = text.slice(0, splitAt);
     const tail = text.slice(splitAt + 1);
     return [head, ...chunkMarkdown(tail, maxChars)];

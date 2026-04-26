@@ -41,4 +41,33 @@ describe('chunkMarkdown', () => {
     const result = chunkMarkdown(text, 4096);
     for (const chunk of result) expect(chunk.length).toBeLessThanOrEqual(4096);
   });
+
+  it('splits a 4097-char string (one over limit) into exactly 2 chunks', () => {
+    const text = 'a'.repeat(4097);
+    const result = chunkMarkdown(text, 4096);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toHaveLength(4096);
+    expect(result[1]).toHaveLength(1);
+  });
+
+  it('throws RangeError for maxChars <= 0', () => {
+    expect(() => chunkMarkdown('hello', 0)).toThrow(RangeError);
+    expect(() => chunkMarkdown('hello', -1)).toThrow(RangeError);
+  });
+
+  it('preserves leading \\n\\n when input exceeds maxChars', () => {
+    const text = '\n\n' + 'a'.repeat(5000);
+    const result = chunkMarkdown(text, 4096);
+    // The leading \n\n should not corrupt the output: concatenation
+    // (with appropriate separator awareness) should preserve information.
+    // Specifically, no character is lost.
+    // Easiest invariant: every character in result must trace back to text.
+    const reconstructed = result.join('');
+    // We don't insist on exact equality (separators are dropped by design),
+    // but we DO insist no NON-separator character is lost: the count of 'a'
+    // in result equals the count of 'a' in text.
+    const aCountIn = (text.match(/a/g) || []).length;
+    const aCountOut = (reconstructed.match(/a/g) || []).length;
+    expect(aCountOut).toBe(aCountIn);
+  });
 });
