@@ -106,6 +106,22 @@ describe('buildCouncilDoneHandler', () => {
     expect(artifactService.synthesize).toHaveBeenCalledWith(THREAD, 'universal');
   });
 
+  it('routes "decision" preset to synthesize call', async () => {
+    const row = makeArtifactRow({ thread_local_seq: 1, preset: 'decision' });
+    const artifactService = {
+      synthesize: vi.fn(async () => row),
+      fetchByThreadLocalSeq: vi.fn(),
+    };
+    const wiring: ArtifactWiring = { artifactService: artifactService as never };
+    const handler = buildCouncilDoneHandler(GROUP, wiring);
+    const ctx = makeMockCtx({ match: 'decision' });
+    await handler(ctx as never);
+
+    expect(artifactService.synthesize).toHaveBeenCalledWith(THREAD, 'decision');
+    expect(ctx.reply).toHaveBeenCalledTimes(1);
+    expect(String(ctx.reply.mock.calls[0][0])).toContain('decision');
+  });
+
   it('replies "unknown preset" and does NOT call synthesize for unknown preset', async () => {
     const artifactService = {
       synthesize: vi.fn(),
@@ -221,5 +237,31 @@ describe('buildCouncilShowHandler', () => {
     // All chunks joined = original content
     const allReplies = ctx.reply.mock.calls.map((c: unknown[]) => String(c[0])).join('');
     expect(allReplies).toBe(longContent);
+  });
+
+  it('ignores messages from wrong group chat', async () => {
+    const artifactService = {
+      synthesize: vi.fn(),
+      fetchByThreadLocalSeq: vi.fn(),
+    };
+    const wiring: ArtifactWiring = { artifactService: artifactService as never };
+    const handler = buildCouncilShowHandler(GROUP, wiring);
+    const ctx = makeMockCtx({ chatId: 999, match: '1' });
+    await handler(ctx as never);
+    expect(ctx.reply).not.toHaveBeenCalled();
+    expect(artifactService.fetchByThreadLocalSeq).not.toHaveBeenCalled();
+  });
+
+  it('ignores messages from bots', async () => {
+    const artifactService = {
+      synthesize: vi.fn(),
+      fetchByThreadLocalSeq: vi.fn(),
+    };
+    const wiring: ArtifactWiring = { artifactService: artifactService as never };
+    const handler = buildCouncilShowHandler(GROUP, wiring);
+    const ctx = makeMockCtx({ isBot: true, match: '1' });
+    await handler(ctx as never);
+    expect(ctx.reply).not.toHaveBeenCalled();
+    expect(artifactService.fetchByThreadLocalSeq).not.toHaveBeenCalled();
   });
 });
