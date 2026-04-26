@@ -194,7 +194,7 @@ async function main() {
   const critiqueStore = new HumanCritiqueStore();
   const resetSnapshotDB = new ResetSnapshotDB(resolve('data/council.db'));
   // v0.5.2.a: ArtifactDB shares council.db. Instantiated early so SessionReset
-  // can use the cross-table counter. Task 16 will wire it into ArtifactService.
+  // can use the cross-table counter. Wired into ArtifactService below.
   const artifactDB = new ArtifactDB(resolve('data/council.db'));
   // v0.5.2 P1-B: DeliberationHandler default-wires a FacilitatorAgent
   // internally when given a facilitatorWorker, so we no longer construct
