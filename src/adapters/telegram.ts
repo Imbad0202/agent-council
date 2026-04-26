@@ -4,6 +4,7 @@ import type {
   PvgRotateWiring,
   CritiqueUiWiring,
   SessionResetWiring,
+  ArtifactWiring,
 } from '../telegram/bot.js';
 import { InlineKeyboard } from 'grammy';
 import type { AgentConfig, CouncilMessage } from '../types.js';
@@ -33,6 +34,11 @@ export interface SessionResetAdapter {
   setSessionResetWiring(wiring: SessionResetWiring): void;
 }
 
+// Same pattern for /councildone + /councilshow wiring.
+export interface ArtifactAdapter {
+  setArtifactWiring(wiring: ArtifactWiring): void;
+}
+
 export class TelegramAdapter implements InputAdapter, OutputAdapter {
   private botManager: BotManager;
   private config: TelegramAdapterConfig;
@@ -41,6 +47,7 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
   private critiqueWiring: HumanCritiqueWiring | undefined;
   private critiqueUiWiring: CritiqueUiWiring | undefined;
   private sessionResetWiring: SessionResetWiring | undefined;
+  private artifactWiring: ArtifactWiring | undefined;
 
   constructor(config: TelegramAdapterConfig) {
     this.config = config;
@@ -75,6 +82,10 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
     this.sessionResetWiring = wiring as SessionResetWiring;
   }
 
+  setArtifactWiring(wiring: unknown): void {
+    this.artifactWiring = wiring as ArtifactWiring;
+  }
+
   async handleCritiqueRequest(req: CritiqueRequest): Promise<void> {
     await dispatchCritiqueRequest(this.critiqueWiring, req);
   }
@@ -92,6 +103,7 @@ export class TelegramAdapter implements InputAdapter, OutputAdapter {
         pvgRotate: this.pvgRotateWiring,
         critiqueUi: this.critiqueUiWiring,
         sessionReset: this.sessionResetWiring,
+        artifact: this.artifactWiring,
       },
     );
     await listenerBot.api.deleteWebhook({ drop_pending_updates: true });
