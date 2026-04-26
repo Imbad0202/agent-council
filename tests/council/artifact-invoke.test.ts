@@ -79,6 +79,13 @@ describe('invokeProviderForArtifact', () => {
     expect(setTimeoutSpy).toHaveBeenCalled();
     expect(clearTimeoutSpy).toHaveBeenCalled();
 
+    // Stronger contract: clearTimeout must receive the SAME handle that
+    // setTimeout returned. Without this, future code that calls
+    // clearTimeout(undefined) or clearTimeout(otherHandle) would still
+    // pass the weaker `toHaveBeenCalled` check above.
+    const handle = setTimeoutSpy.mock.results[0].value;
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(handle);
+
     setTimeoutSpy.mockRestore();
     clearTimeoutSpy.mockRestore();
   });
@@ -150,6 +157,11 @@ describe('isHardFail', () => {
 
   it('plain Error without .status → false (retry conservatively, spec §8)', () => {
     expect(isHardFail(new Error('network blip'))).toBe(false);
+  });
+
+  it('returns false for an Error whose .status is undefined (retry conservatively)', () => {
+    const err = Object.assign(new Error('weird'), { status: undefined });
+    expect(isHardFail(err)).toBe(false);
   });
 });
 
