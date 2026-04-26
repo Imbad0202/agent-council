@@ -69,6 +69,8 @@ export interface CouncilMessage {
   critiqueTarget?: string;
 }
 
+export type WorkerRoleType = 'peer' | 'facilitator' | 'artifact-synthesizer';
+
 export interface AgentConfig {
   id: string;
   name: string;
@@ -78,7 +80,7 @@ export interface AgentConfig {
   personality: string;
   botTokenEnv?: string;
   topics?: string[];
-  roleType?: 'peer' | 'facilitator';
+  roleType?: WorkerRoleType;
   models?: { low: string; medium: string; high: string };
   defaultModelTier?: Complexity;
   // Per-tier thinking config. Omit `thinking` entirely to let the SDK default
@@ -88,6 +90,14 @@ export interface AgentConfig {
     | { mode: 'enabled'; budget_tokens: number }
   >>;
   cacheSystemPrompt?: boolean;
+}
+
+/**
+ * Treat undefined roleType as 'peer' (v0.5.1 backwards-compat).
+ * All call sites that branch on roleType MUST go through this helper.
+ */
+export function effectiveRoleType(w: AgentConfig): WorkerRoleType {
+  return w.roleType ?? 'peer';
 }
 
 export interface CouncilConfig {
