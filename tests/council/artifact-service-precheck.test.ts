@@ -139,6 +139,20 @@ describe('ArtifactService Phase 1 — pre-checks', () => {
       const svc = makeService({ handler: makeHandler({ pendingClassifications: true }) });
       await expect(svc.synthesize(THREAD, 'universal')).rejects.toMatchObject({ threadId: THREAD });
     });
+
+    it('reset guard fires before deliberation guard when both in flight', async () => {
+      const svc = makeService({
+        handler: makeHandler({ resetInFlight: true, deliberationInFlight: true }),
+      });
+      await expect(svc.synthesize(THREAD, 'universal')).rejects.toThrow(ArtifactResetInFlightError);
+    });
+
+    it('deliberation guard fires before pendingClassifications guard when both in flight', async () => {
+      const svc = makeService({
+        handler: makeHandler({ deliberationInFlight: true, pendingClassifications: true }),
+      });
+      await expect(svc.synthesize(THREAD, 'universal')).rejects.toThrow(ArtifactDeliberationInFlightError);
+    });
   });
 
   describe('Persistent guard — blind review', () => {

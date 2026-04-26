@@ -10,10 +10,15 @@ import {
   ArtifactBlindReviewActiveError,
   ArtifactEmptySegmentError,
   SynthesisAlreadyRunningError,
-  MalformedArtifactError,
 } from './artifact-errors.js';
+import { type Preset } from './artifact-prompt.js';
+
+// Phase 2/3 forward-staged imports — used in Task 12 (synthesis + commit phases).
+// Kept here so the Task 12 implementer doesn't have to add them mid-feature;
+// tsc passes today because tsconfig.json doesn't enable `noUnusedLocals`.
+import { MalformedArtifactError } from './artifact-errors.js';
 import { computeNextSegmentIndex } from './segment-counter.js';
-import { buildArtifactPrompt, parseArtifact, type Preset } from './artifact-prompt.js';
+import { buildArtifactPrompt, parseArtifact } from './artifact-prompt.js';
 import { invokeWithRetry } from './artifact-invoke.js';
 import { createProvider } from '../worker/providers/factory.js';
 
@@ -42,6 +47,17 @@ export interface ArtifactServiceDeps {
 export class ArtifactService {
   constructor(private deps: ArtifactServiceDeps) {}
 
+  /**
+   * Returns the highest segment_index that has been SEALED for this thread,
+   * across BOTH `session_reset_snapshots` and `council_artifacts`.
+   * Returns null when no sealed segments exist for the thread.
+   *
+   * Used as the cache-freshness comparand in /councildone fast-path:
+   * a cached artifact is fresh only if `cached.segment_index ===
+   * lastSealedSegmentIndex(threadId)`. Distinct from
+   * `computeNextSegmentIndex` (segment-counter.ts), which returns the
+   * NEXT index to assign (max + 1).
+   */
   lastSealedSegmentIndex(threadId: number): number | null {
     const r = this.deps.resetDb.listSnapshotsForThread(threadId).map(s => s.segmentIndex);
     const a = this.deps.artifactDb.findByThread(threadId).map(x => x.segment_index);
