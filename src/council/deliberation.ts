@@ -94,6 +94,11 @@ interface SessionState {
   // Keying by message.id (not a counter) keeps add/remove 1:1 even if
   // bus events fire out of order or duplicate.
   pendingClassifications: Set<string>;
+  // True while ArtifactService.synthesize is mid-flight for this thread.
+  // runDeliberation checks this before running agents so deliberation cannot
+  // append new messages to a segment that /councildone is actively reading.
+  // Cleared by ArtifactService after the LLM call (success or error).
+  synthesisInFlight: boolean;
 }
 
 export class DeliberationHandler {
@@ -282,6 +287,7 @@ export class DeliberationHandler {
         resetInFlight: false,
         deliberationInFlight: false,
         pendingClassifications: new Set(),
+        synthesisInFlight: false,
       });
     }
     return this.sessions.get(threadId)!;
@@ -303,7 +309,7 @@ export class DeliberationHandler {
     return segs[segs.length - 1].messages;
   }
 
-  public sealCurrentSegment(threadId: number, snapshotId: string): void {
+  public sealCurrentSegment(threadId: number, snapshotId: string | null): void {
     const session = this.getSession(threadId);
     const last = session.segments[session.segments.length - 1];
     if (last.endedAt !== null) {
@@ -399,6 +405,14 @@ export class DeliberationHandler {
     return this.getSession(threadId).resetInFlight;
   }
 
+  public setSynthesisInFlight(threadId: number, value: boolean): void {
+    this.getSession(threadId).synthesisInFlight = value;
+  }
+
+  public isSynthesisInFlight(threadId: number): boolean {
+    return this.getSession(threadId).synthesisInFlight;
+  }
+
   public isDeliberationInFlight(threadId: number): boolean {
     return this.getSession(threadId).deliberationInFlight;
   }
@@ -491,6 +505,20 @@ export class DeliberationHandler {
       await this.sendFn(
         'facilitator',
         '⏳ /councilreset is in progress on this thread. Your message was not picked up — please resend once the reset confirmation lands.',
+        threadId,
+      );
+      return;
+    }
+
+    // v0.5.2.a: /councildone sets synthesisInFlight while the artifact LLM
+    // call is reading the current segment. Deliberation must not append new
+    // messages to a segment that is being consumed — the resulting artifact
+    // would diverge from the sealed transcript. Drop with a user-facing notice;
+    // the user can resend once /councildone finishes and clears the flag.
+    if (session.synthesisInFlight) {
+      await this.sendFn(
+        'facilitator',
+        '⏳ /councildone synthesis is in progress on this thread. Your message was not picked up — please resend once the artifact is ready.',
         threadId,
       );
       return;
