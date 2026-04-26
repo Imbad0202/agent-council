@@ -138,12 +138,26 @@ async function main() {
   }
 
   // Adapter: abstracts Telegram / CLI transport
+  //
+  // v0.5.2.a (codex round-2 finding): exclude artifact-synthesizer agents from
+  // the Telegram pool. The synthesizer never participates in transport — it
+  // runs only when /councildone is invoked, via direct provider.chat. If we
+  // pass it to BotManager, the per-agent token loop (telegram/bot.ts:381)
+  // sees no botTokenEnv on the synthesizer, falls back to TELEGRAM_BOT_TOKEN,
+  // creates a bot for it, and bots.size becomes nonzero — which skips the
+  // single-token all-agent fallback at bot.ts:389 and throws
+  // "Listener bot not found" for peer agents whose per-agent env var is
+  // unset. Filtering here keeps the all-agent fallback usable for
+  // single-token deployments that follow docs/synthesizer-config.md.
+  const transportAgents = agentConfigs.filter(
+    (a) => effectiveRoleType(a) !== 'artifact-synthesizer',
+  );
   const listenerAgent = councilConfig.participation?.listenerAgent || pickFirstPeerConfig(agentConfigs).id;
   const adapterConfig: AdapterFactoryConfig = {
     cli: { verbose: args.verbose },
     telegram: {
       groupChatId,
-      agents: agentConfigs,
+      agents: transportAgents,
       listenerAgentId: listenerAgent,
     },
   };
