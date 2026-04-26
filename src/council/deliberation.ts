@@ -2,6 +2,7 @@ import type { EventBus } from '../events/bus.js';
 import type { AgentWorker } from '../worker/agent-worker.js';
 import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type { ArtifactDB } from './artifact-db.js';
+import { effectiveResetSnapshots } from './effective-reset-snapshots.js';
 import type {
   CouncilConfig,
   CouncilMessage,
@@ -444,30 +445,13 @@ export class DeliberationHandler {
       const snap = this.resetSnapshotDB.getSnapshot(snapshotId);
       if (snap) return snap.summaryMarkdown;
     }
-    // Post-restart DB fallback: listSnapshotsForThread returns rows ordered
-    // by segment_index ASC, so the last element is the most recent snapshot.
-    //
-    // v0.5.2.a codex round-4 P2: but only fall back to reset summary if no
-    // artifact has been sealed AFTER the latest reset for this thread. If
-    // artifactDb.findByThread produces a row with segment_index >= the
-    // latest reset's segment_index, the artifact is the closer primitive
-    // and the carry-forward should NOT leak the older reset summary. We
-    // detect this conservatively: if EITHER table reports a sealed segment
-    // with index ≥ the latest reset's segment_index, return null.
-    const rows = this.resetSnapshotDB.listSnapshotsForThread(threadId);
-    if (rows.length > 0) {
-      const latestReset = rows[rows.length - 1];
-      if (this.artifactDB) {
-        const artifactRows = this.artifactDB.findByThread(threadId);
-        const latestArtifactIdx = artifactRows.length > 0
-          ? Math.max(...artifactRows.map(r => r.segment_index))
-          : -1;
-        if (latestArtifactIdx >= latestReset.segmentIndex) {
-          // Artifact is the closer primitive — do NOT leak older reset summary.
-          return null;
-        }
-      }
-      return latestReset.summaryMarkdown;
+    // Post-restart DB fallback. Use the cross-cutting artifact-boundary
+    // filter (effectiveResetSnapshots) so any reset snapshot SUPERSEDED by
+    // a later /councildone is dropped. Spec §0: artifact is the closing
+    // primitive; older reset summaries must NOT leak through it.
+    const effective = effectiveResetSnapshots(threadId, this.resetSnapshotDB, this.artifactDB);
+    if (effective.length > 0) {
+      return effective[effective.length - 1].summaryMarkdown;
     }
     return null;
   }

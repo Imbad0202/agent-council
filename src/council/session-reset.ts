@@ -17,6 +17,7 @@ import {
   SynthesisInProgressError,
 } from './session-reset-errors.js';
 import { computeNextSegmentIndex } from './segment-counter.js';
+import { effectiveResetSnapshots } from './effective-reset-snapshots.js';
 
 export interface HandlerForReset {
   getCurrentSegmentMessages(threadId: number): readonly CouncilMessage[];
@@ -123,7 +124,12 @@ export class SessionReset {
       // Prepend the existing snapshot markdowns as a single synthetic human
       // message so the facilitator keeps rolling every prior sealed summary
       // forward into the next one.
-      const existing = this.db.listSnapshotsForThread(threadId);
+      //
+      // v0.5.2.a codex round-5 P2: use effectiveResetSnapshots so any reset
+      // SUPERSEDED by a later /councildone artifact is dropped. Spec §0:
+      // /councildone is a closing primitive; pre-artifact reset content
+      // must NOT leak into post-artifact /councilreset prior-summary blocks.
+      const existing = effectiveResetSnapshots(threadId, this.db, this.artifactDb);
       const priorSummariesMsg: CouncilMessage | null =
         existing.length > 0
           ? {
