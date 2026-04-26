@@ -102,6 +102,9 @@ async function main() {
   console.log(`[v0.2.1] Loaded ${agentConfigs.length} agents: ${agentConfigs.map((a) => `${a.name}(${a.provider})`).join(', ')}`);
 
   // Split agents into peers and facilitator
+  // TODO(Task 16): use effectiveRoleType to also exclude 'artifact-synthesizer'
+  // (currently any agent with roleType: 'artifact-synthesizer' would join deliberation
+  // as a peer; not yet a deployed concern because no synthesizer config exists pre-Task 16)
   const peerConfigs = agentConfigs.filter((a) => a.roleType !== 'facilitator');
   const facilitatorConfig = agentConfigs.find((a) => a.roleType === 'facilitator');
 
