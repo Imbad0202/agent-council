@@ -3,6 +3,8 @@ import type { MemoryDB } from '../memory/db.js';
 import type { SessionReset } from '../council/session-reset.js';
 import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type { HandlerForReset } from '../council/session-reset.js';
+import type { ArtifactService } from '../council/artifact-service.js';
+import { parseArtifact } from '../council/artifact-prompt.js';
 
 type PrintFn = (line: string) => void;
 
@@ -13,7 +15,7 @@ type PrintFn = (line: string) => void;
 // the whitelist lives here next to the actual handlers — keep them in
 // sync. Sync commands handled by handle(): help, sessions, delete,
 // memories, memory, forget, patterns. Async commands handled by
-// handleAsync(): councilreset, councilhistory.
+// handleAsync(): councilreset, councilhistory, councildone, councilshow.
 //
 // Round-12 codex finding [P2]: /quit /debug /resume are advertised in the
 // /help banner (CLI startup line + listSessions output) but are NOT
@@ -31,6 +33,8 @@ export const CLI_COMMAND_NAMES: ReadonlySet<string> = new Set([
   'patterns',
   'councilreset',
   'councilhistory',
+  'councildone',
+  'councilshow',
   'quit',
   'debug',
   'resume',
@@ -43,17 +47,30 @@ export interface ResetWiring {
   threadId?: number;
 }
 
+export interface ArtifactWiring {
+  artifactService?: ArtifactService;
+  threadId?: number;
+}
+
 export class CliCommandHandler {
   private sessions: CliSessionManager;
   private db: MemoryDB;
   private print: PrintFn;
   private reset: ResetWiring;
+  private artifact: ArtifactWiring;
 
-  constructor(sessions: CliSessionManager, db: MemoryDB, print: PrintFn, reset: ResetWiring = {}) {
+  constructor(
+    sessions: CliSessionManager,
+    db: MemoryDB,
+    print: PrintFn,
+    reset: ResetWiring = {},
+    artifact: ArtifactWiring = {},
+  ) {
     this.sessions = sessions;
     this.db = db;
     this.print = print;
     this.reset = reset;
+    this.artifact = artifact;
   }
 
   handle(command: string, args: string): void {
@@ -77,6 +94,8 @@ export class CliCommandHandler {
     switch (command) {
       case 'councilreset': return this.councilReset();
       case 'councilhistory': return this.councilHistory();
+      case 'councildone': return this.councilDone(args);
+      case 'councilshow': return this.councilShow(args);
       default:
         this.handle(command, args);
     }
@@ -195,5 +214,51 @@ export class CliCommandHandler {
     for (const p of patterns) {
       this.print(`  [${p.agentId}/${p.topic}] ${p.behavior}`);
     }
+  }
+
+  private async councilDone(args: string): Promise<void> {
+    const svc = this.artifact.artifactService;
+    if (!svc || this.artifact.threadId === undefined) {
+      this.print('/councildone is not configured in this CLI session.');
+      return;
+    }
+    const trimmed = args.trim();
+    let preset: 'universal' | 'decision';
+    if (trimmed === '' || trimmed === 'universal') preset = 'universal';
+    else if (trimmed === 'decision') preset = 'decision';
+    else {
+      this.print('unknown preset, accepted: universal | decision');
+      return;
+    }
+    try {
+      const row = await svc.synthesize(this.artifact.threadId, preset);
+      const { tldr } = parseArtifact(row.content_md);
+      const tldrSummary = tldr ? tldr.slice(0, 200) : '(missing TL;DR)';
+      this.print(`✅ Artifact #${row.thread_local_seq} (${row.preset}) created.`);
+      this.print(`TL;DR: ${tldrSummary}`);
+      this.print(`完整內容: /councilshow ${row.thread_local_seq}`);
+    } catch (err) {
+      this.print(`/councildone failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private async councilShow(args: string): Promise<void> {
+    const svc = this.artifact.artifactService;
+    if (!svc || this.artifact.threadId === undefined) {
+      this.print('/councilshow is not configured in this CLI session.');
+      return;
+    }
+    const trimmed = args.trim();
+    if (!/^[1-9]\d{0,9}$/.test(trimmed)) {
+      this.print('/councilshow <id>，例：/councilshow 3');
+      return;
+    }
+    const seq = parseInt(trimmed, 10);
+    const row = svc.fetchByThreadLocalSeq(this.artifact.threadId, seq);
+    if (!row) {
+      this.print(`artifact #${seq} not found in this thread`);
+      return;
+    }
+    this.print(row.content_md);
   }
 }
