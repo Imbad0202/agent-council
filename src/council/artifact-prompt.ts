@@ -84,8 +84,16 @@ export function buildArtifactPrompt(
  * Spec §5: regex avoids \Z (not a JS anchor) and the m flag (which would
  * make $ a line-end and stop at the first newline). Uses (?:^|\n) for
  * line-start semantics and bare $ for end-of-string.
+ *
+ * Heading line allows trailing horizontal whitespace only (`[ \t]*`) — NOT
+ * arbitrary `\s*` — because `\s` would absorb the newlines that delimit the
+ * heading. A blank separator line (`\n\n+`) is required before the body, and
+ * the body's first character must not start another `## ` heading (handled by
+ * the `(?!## )` negative lookahead). Together these reject a TL;DR section
+ * that has no body — extra blank lines would otherwise let the following
+ * section's content false-positive match as TL;DR body.
  */
-const TLDR_RE = /(?:^|\n)## TL;DR\s*\n+([^\n][\s\S]*?)(?=\n## |$)/;
+const TLDR_RE = /(?:^|\n)## TL;DR[ \t]*\n\n+(?!## )([^\n][\s\S]*?)(?=\n## |$)/;
 
 export function parseArtifact(content: string): { tldr: string | null } {
   const m = content.match(TLDR_RE);

@@ -50,6 +50,12 @@ describe('buildArtifactPrompt', () => {
     expect(messages[0].content).toContain('[agent-alpha] first point');
     expect(messages[0].content).toContain('[agent-alpha] second point');
   });
+
+  it('falls back to role when agentId is absent', () => {
+    const humanTurn: CouncilMessage = { id: 'h1', role: 'human', content: 'a question', timestamp: 0 };
+    const { messages } = buildArtifactPrompt('universal', [humanTurn], 'model');
+    expect(messages[0].content).toContain('[human] a question');
+  });
 });
 
 describe('parseArtifact', () => {
@@ -82,5 +88,15 @@ describe('parseArtifact', () => {
     const content = `## TL;DR\n\nImmediate start summary.`;
     const { tldr } = parseArtifact(content);
     expect(tldr).toBe('Immediate start summary.');
+  });
+
+  it('returns null for blank TL;DR followed by another heading', () => {
+    const md = '## TL;DR\n\n\n\n## Discussion\n\ndetails here';
+    expect(parseArtifact(md).tldr).toBeNull();
+  });
+
+  it('extracts TL;DR when followed by decision-preset headings', () => {
+    const md = '## TL;DR\n\nWe chose option B.\n\n## Options considered\n\nA, B, C.';
+    expect(parseArtifact(md).tldr).toBe('We chose option B.');
   });
 });
