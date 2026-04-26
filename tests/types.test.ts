@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { effectiveRoleType } from '../src/types.js';
 import type {
   AgentRole,
   CouncilMessage,
@@ -16,6 +17,7 @@ import type {
   AgentStats,
   ExecutionConfig,
   ExecutionTask,
+  WorkerRoleType,
 } from '../src/types.js';
 
 describe('types', () => {
@@ -278,5 +280,23 @@ describe('types', () => {
       },
     };
     expect(config.execution?.enabled).toBe(true);
+  });
+});
+
+describe('effectiveRoleType', () => {
+  const baseConfig: AgentConfig = {
+    id: 'a', name: 'A', provider: 'custom', model: 'm',
+    memoryDir: '.', personality: '',
+  };
+
+  it('returns explicit roleType when set', () => {
+    const r: WorkerRoleType = effectiveRoleType({ ...baseConfig, roleType: 'facilitator' });
+    expect(r).toBe('facilitator');
+    expect(effectiveRoleType({ ...baseConfig, roleType: 'artifact-synthesizer' })).toBe('artifact-synthesizer');
+    expect(effectiveRoleType({ ...baseConfig, roleType: 'peer' })).toBe('peer');
+  });
+
+  it('defaults undefined roleType to peer', () => {
+    expect(effectiveRoleType(baseConfig)).toBe('peer');
   });
 });

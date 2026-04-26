@@ -1,6 +1,8 @@
 import type { EventBus } from '../events/bus.js';
 import type { AgentWorker } from '../worker/agent-worker.js';
 import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
+import type { ArtifactDB } from './artifact-db.js';
+import { effectiveResetSnapshots } from './effective-reset-snapshots.js';
 import type {
   CouncilConfig,
   CouncilMessage,
@@ -94,6 +96,24 @@ interface SessionState {
   // Keying by message.id (not a counter) keeps add/remove 1:1 even if
   // bus events fire out of order or duplicate.
   pendingClassifications: Set<string>;
+  // v0.5.2.a codex round-3 P1: IntentGate registers its 'message.received'
+  // listener BEFORE DeliberationHandler does (src/index.ts:182 vs :217).
+  // When IntentGate's keyword path classifies synchronously, listener order
+  // is: IntentGate.classify() → emit 'intent.classified' → our delete fires
+  // BEFORE our add fires → message.id is added to pending AFTER its
+  // classification already completed. Result: msg.id stuck in pending
+  // forever, /councildone PendingClassificationError every time.
+  // We track classifications that complete BEFORE the corresponding add by
+  // recording message.ids on intent.classified; the message.received listener
+  // checks this set and skips the add if classification already fired.
+  // Bounded growth: removed when consumed by the corresponding add, so the
+  // set holds at most one entry per in-flight race window.
+  recentlyClassified: Set<string>;
+  // True while ArtifactService.synthesize is mid-flight for this thread.
+  // runDeliberation checks this before running agents so deliberation cannot
+  // append new messages to a segment that /councildone is actively reading.
+  // Cleared by ArtifactService after the LLM call (success or error).
+  synthesisInFlight: boolean;
 }
 
 export class DeliberationHandler {
@@ -108,6 +128,10 @@ export class DeliberationHandler {
   private critiqueStore: HumanCritiqueStore | undefined;
   private critiqueTimeoutMs: number;
   private resetSnapshotDB: ResetSnapshotDB | undefined;
+  // v0.5.2.a codex round-4 P2: getSnapshotPrefix needs to know if a thread
+  // has a /councildone artifact sealed AFTER its latest reset, to suppress
+  // stale reset-summary leakage past the artifact closing primitive.
+  private artifactDB: ArtifactDB | undefined;
   private facilitatorIntervention:
     | {
         recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
@@ -147,6 +171,11 @@ export class DeliberationHandler {
       critiqueStore?: HumanCritiqueStore;
       critiqueTimeoutMs?: number;
       resetSnapshotDB?: ResetSnapshotDB;
+      // v0.5.2.a codex round-4 P2: optional ArtifactDB so getSnapshotPrefix
+      // can suppress stale reset-summary leakage past /councildone boundary.
+      // Optional: handlers without artifactDB (legacy / pre-v0.5.2.a tests)
+      // simply behave as before.
+      artifactDB?: ArtifactDB;
       // v0.5.2 P1-B: optional facilitator-driven intervention hook. When set,
       // runDeliberation calls these inline after every agent.responded emit so
       // the LLM call resolves WITHIN the deliberationInFlight window. Narrow
@@ -170,6 +199,7 @@ export class DeliberationHandler {
     this.critiqueStore = options?.critiqueStore;
     this.critiqueTimeoutMs = options?.critiqueTimeoutMs ?? DEFAULT_CRITIQUE_TIMEOUT_MS;
     this.resetSnapshotDB = options?.resetSnapshotDB;
+    this.artifactDB = options?.artifactDB;
     // v0.5.2 P1-B (codex rounds 1-2):
     // - Round-1: a caller wiring only facilitatorWorker silently lost
     //   mid-round steer/challenge interventions when the agent.responded
@@ -258,11 +288,33 @@ export class DeliberationHandler {
     // classified. Materialize the session via getSession (not sessions.get)
     // because message.received is the first event a brand-new thread will
     // see — sessions.get would no-op and the marker would be lost.
+    //
+    // v0.5.2.a codex round-3 P1: IntentGate's listener is registered before
+    // ours (src/index.ts:182 IntentGate, :217 DeliberationHandler), so when
+    // IntentGate takes its synchronous keyword path it emits intent.classified
+    // BEFORE our add-pending listener has run. We use recentlyClassified to
+    // detect that ordering and skip the stale add.
     this.bus.on('message.received', ({ message, threadId }) => {
-      this.getSession(threadId).pendingClassifications.add(message.id);
+      const session = this.getSession(threadId);
+      if (session.recentlyClassified.has(message.id)) {
+        // Race: intent.classified already fired before this add. Consume
+        // the marker and skip the add — the classification is complete, the
+        // message must NOT linger in pendingClassifications.
+        session.recentlyClassified.delete(message.id);
+        return;
+      }
+      session.pendingClassifications.add(message.id);
     });
     this.bus.on('intent.classified', ({ message, threadId }) => {
-      this.getSession(threadId).pendingClassifications.delete(message.id);
+      const session = this.getSession(threadId);
+      if (session.pendingClassifications.has(message.id)) {
+        // Normal order: add fired first, classification consumes the marker.
+        session.pendingClassifications.delete(message.id);
+      } else {
+        // Race: classification fired before our add. Mark for the add
+        // listener to consume so it knows to skip.
+        session.recentlyClassified.add(message.id);
+      }
     });
   }
 
@@ -282,6 +334,8 @@ export class DeliberationHandler {
         resetInFlight: false,
         deliberationInFlight: false,
         pendingClassifications: new Set(),
+        recentlyClassified: new Set(),
+        synthesisInFlight: false,
       });
     }
     return this.sessions.get(threadId)!;
@@ -303,7 +357,12 @@ export class DeliberationHandler {
     return segs[segs.length - 1].messages;
   }
 
-  public sealCurrentSegment(threadId: number, snapshotId: string): void {
+  // HandlerForArtifact adapter — returns the shape ArtifactService expects.
+  public getCurrentSegment(threadId: number): { messages: readonly CouncilMessage[] } {
+    return { messages: this.getCurrentSegmentMessages(threadId) };
+  }
+
+  public sealCurrentSegment(threadId: number, snapshotId: string | null): void {
     const session = this.getSession(threadId);
     const last = session.segments[session.segments.length - 1];
     if (last.endedAt !== null) {
@@ -369,16 +428,30 @@ export class DeliberationHandler {
     if (!this.resetSnapshotDB) return null;
     const session = this.getSession(threadId);
     for (let i = session.segments.length - 1; i >= 0; i--) {
-      const snapshotId = session.segments[i].snapshotId;
+      const seg = session.segments[i];
+      // v0.5.2.a codex round-4 P2: a sealed segment with null snapshotId is
+      // an /councildone artifact boundary (only `unsealCurrentSegment` also
+      // produces null, but it pairs with endedAt=null — i.e. the segment
+      // becomes unsealed again). The artifact is the closing primitive per
+      // spec §0; older reset summaries must NOT leak through it. Stop the
+      // traversal and return null. Workers in segments after a /councildone
+      // start with a clean prior context (or whatever segment-2's
+      // deliberation produces), as designed.
+      if (seg.endedAt !== null && !seg.snapshotId) {
+        return null;
+      }
+      const snapshotId = seg.snapshotId;
       if (!snapshotId) continue;
       const snap = this.resetSnapshotDB.getSnapshot(snapshotId);
       if (snap) return snap.summaryMarkdown;
     }
-    // Post-restart DB fallback: listSnapshotsForThread returns rows ordered
-    // by segment_index ASC, so the last element is the most recent snapshot.
-    const rows = this.resetSnapshotDB.listSnapshotsForThread(threadId);
-    if (rows.length > 0) {
-      return rows[rows.length - 1].summaryMarkdown;
+    // Post-restart DB fallback. Use the cross-cutting artifact-boundary
+    // filter (effectiveResetSnapshots) so any reset snapshot SUPERSEDED by
+    // a later /councildone is dropped. Spec §0: artifact is the closing
+    // primitive; older reset summaries must NOT leak through it.
+    const effective = effectiveResetSnapshots(threadId, this.resetSnapshotDB, this.artifactDB);
+    if (effective.length > 0) {
+      return effective[effective.length - 1].summaryMarkdown;
     }
     return null;
   }
@@ -397,6 +470,14 @@ export class DeliberationHandler {
 
   public isResetInFlight(threadId: number): boolean {
     return this.getSession(threadId).resetInFlight;
+  }
+
+  public setSynthesisInFlight(threadId: number, value: boolean): void {
+    this.getSession(threadId).synthesisInFlight = value;
+  }
+
+  public isSynthesisInFlight(threadId: number): boolean {
+    return this.getSession(threadId).synthesisInFlight;
   }
 
   public isDeliberationInFlight(threadId: number): boolean {
@@ -491,6 +572,20 @@ export class DeliberationHandler {
       await this.sendFn(
         'facilitator',
         '⏳ /councilreset is in progress on this thread. Your message was not picked up — please resend once the reset confirmation lands.',
+        threadId,
+      );
+      return;
+    }
+
+    // v0.5.2.a: /councildone sets synthesisInFlight while the artifact LLM
+    // call is reading the current segment. Deliberation must not append new
+    // messages to a segment that is being consumed — the resulting artifact
+    // would diverge from the sealed transcript. Drop with a user-facing notice;
+    // the user can resend once /councildone finishes and clears the flag.
+    if (session.synthesisInFlight) {
+      await this.sendFn(
+        'facilitator',
+        '⏳ /councildone synthesis is in progress on this thread. Your message was not picked up — please resend once the artifact is ready.',
         threadId,
       );
       return;

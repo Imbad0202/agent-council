@@ -6,6 +6,7 @@ import { CliCommandHandler } from '../../src/adapters/cli-commands.js';
 import { CliSessionManager } from '../../src/adapters/cli-sessions.js';
 import { MemoryDB } from '../../src/memory/db.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
+import { ArtifactDB } from '../../src/council/artifact-db.js';
 import { SessionReset } from '../../src/council/session-reset.js';
 
 const THREAD = 7;
@@ -27,6 +28,7 @@ function makeDelibHandler(overrides: Partial<{
     isResetInFlight: vi.fn(() => overrides.resetInFlight ?? false),
     isDeliberationInFlight: vi.fn(() => overrides.deliberationInFlight ?? false),
     hasPendingClassifications: vi.fn(() => overrides.pendingClassifications ?? false),
+    isSynthesisInFlight: vi.fn(() => false),
     setResetInFlight: vi.fn(),
     sealCurrentSegment: vi.fn(),
     openNewSegment: vi.fn(),
@@ -63,6 +65,7 @@ let tmpDir: string;
 let sessions: CliSessionManager;
 let memDb: MemoryDB;
 let resetDb: ResetSnapshotDB;
+let artifactDb: ArtifactDB;
 let output: string[];
 
 beforeEach(() => {
@@ -70,19 +73,21 @@ beforeEach(() => {
   sessions = new CliSessionManager(tmpDir);
   memDb = new MemoryDB(':memory:');
   resetDb = new ResetSnapshotDB(':memory:');
+  artifactDb = new ArtifactDB(':memory:');
   output = [];
 });
 
 afterEach(() => {
   memDb.close();
   resetDb.close();
+  artifactDb.close();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe('/councilreset CLI', () => {
   it('prints one-line confirmation with segment index + counts on success', async () => {
     const facilitator = makeFacilitator(VALID_SUMMARY);
-    const sessionReset = new SessionReset(resetDb, facilitator as never);
+    const sessionReset = new SessionReset(resetDb, artifactDb, facilitator as never);
     const delib = makeDelibHandler();
     const handler = new CliCommandHandler(
       sessions,
@@ -101,7 +106,7 @@ describe('/councilreset CLI', () => {
 
   it('prints BlindReviewActiveError message when blind-review pending', async () => {
     const facilitator = makeFacilitator(VALID_SUMMARY);
-    const sessionReset = new SessionReset(resetDb, facilitator as never);
+    const sessionReset = new SessionReset(resetDb, artifactDb, facilitator as never);
     const delib = makeDelibHandler({ blindReviewSessionId: 'br-active' });
     const handler = new CliCommandHandler(
       sessions,
@@ -120,7 +125,7 @@ describe('/councilreset CLI', () => {
 
   it('prints ResetInProgressError message when another reset is mid-flight', async () => {
     const facilitator = makeFacilitator(VALID_SUMMARY);
-    const sessionReset = new SessionReset(resetDb, facilitator as never);
+    const sessionReset = new SessionReset(resetDb, artifactDb, facilitator as never);
     const delib = makeDelibHandler({ resetInFlight: true });
     const handler = new CliCommandHandler(
       sessions,

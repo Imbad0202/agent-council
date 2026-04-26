@@ -20,6 +20,9 @@ import {
   buildCritiqueTextHandler,
 } from './critique-callback.js';
 import { randomUUID } from 'node:crypto';
+import { parseArtifact } from '../council/artifact-prompt.js';
+import { chunkMarkdown } from '../util/chunk-markdown.js';
+import type { ArtifactService } from '../council/artifact-service.js';
 
 export interface BlindReviewWiring {
   store: BlindReviewStore;
@@ -40,6 +43,10 @@ export interface PvgRotateWiring {
 export interface CritiqueUiWiring {
   state: PendingCritiqueState;
   sendFn?: (agentId: string, content: string, threadId?: number) => Promise<void>;
+}
+
+export interface ArtifactWiring {
+  artifactService?: ArtifactService;
 }
 
 // Round-15 codex finding [P2]: /councilhistory only needs the snapshot DB;
@@ -202,6 +209,63 @@ export function buildCouncilHistoryHandler(groupChatId: number, db: ResetSnapsho
   };
 }
 
+export function buildCouncilDoneHandler(groupChatId: number, wiring: ArtifactWiring) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+    if (!wiring.artifactService) {
+      await ctx.reply('/councildone is not configured.');
+      return;
+    }
+    const threadId = resolveTelegramThreadId(ctx.message);
+    const text = ctx.match?.toString().trim() ?? '';
+    let preset: 'universal' | 'decision';
+    if (text === '' || text === 'universal') preset = 'universal';
+    else if (text === 'decision') preset = 'decision';
+    else {
+      await ctx.reply('unknown preset, accepted: universal | decision');
+      return;
+    }
+    try {
+      const row = await wiring.artifactService.synthesize(threadId, preset);
+      const { tldr } = parseArtifact(row.content_md);
+      const summary = tldr ? tldr.slice(0, 200) : '(missing TL;DR)';
+      await ctx.reply(
+        `✅ Artifact #${row.thread_local_seq} (${row.preset}) created.\n\nTL;DR: ${summary}\n\n完整內容: /councilshow ${row.thread_local_seq}`,
+      );
+    } catch (err) {
+      await ctx.reply(`/councildone failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+}
+
+export function buildCouncilShowHandler(groupChatId: number, wiring: ArtifactWiring) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+    if (!wiring.artifactService) {
+      await ctx.reply('/councilshow is not configured.');
+      return;
+    }
+    const threadId = resolveTelegramThreadId(ctx.message);
+    const arg = ctx.match?.toString().trim() ?? '';
+    if (!/^[1-9]\d{0,9}$/.test(arg)) {
+      await ctx.reply('/councilshow <id>，例：/councilshow 3');
+      return;
+    }
+    const seq = parseInt(arg, 10);
+    const row = wiring.artifactService.fetchByThreadLocalSeq(threadId, seq);
+    if (!row) {
+      await ctx.reply(`artifact #${seq} not found in this thread`);
+      return;
+    }
+    const chunks = chunkMarkdown(row.content_md, 4096);
+    for (const chunk of chunks) {
+      await ctx.reply(chunk);
+    }
+  };
+}
+
 export function buildBlindReviewCallback(
   groupChatId: number,
   store: BlindReviewStore,
@@ -340,9 +404,10 @@ export class BotManager {
       pvgRotate?: PvgRotateWiring;
       critiqueUi?: CritiqueUiWiring;
       sessionReset?: SessionResetWiring;
+      artifact?: ArtifactWiring;
     } = {},
   ): void {
-    const { blindReview, pvgRotate, critiqueUi, sessionReset } = wiring;
+    const { blindReview, pvgRotate, critiqueUi, sessionReset, artifact } = wiring;
     const listenerBot = this.bots.get(this.listenerAgentId);
     if (!listenerBot) {
       throw new Error(`Listener bot not found for agent: ${this.listenerAgentId}`);
@@ -362,6 +427,11 @@ export class BotManager {
     if (sessionReset) {
       listenerBot.command('councilreset', buildCouncilResetHandler(this.groupChatId, sessionReset));
       listenerBot.command('councilhistory', buildCouncilHistoryHandler(this.groupChatId, sessionReset.db));
+    }
+
+    if (artifact) {
+      listenerBot.command('councildone', buildCouncilDoneHandler(this.groupChatId, artifact));
+      listenerBot.command('councilshow', buildCouncilShowHandler(this.groupChatId, artifact));
     }
 
     if (blindReview) {

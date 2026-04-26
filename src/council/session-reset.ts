@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
+import type { ArtifactDB } from './artifact-db.js';
 import type { CouncilMessage, ResetSnapshot } from '../types.js';
 import {
   buildPriorSummariesBlock,
@@ -13,7 +14,10 @@ import {
   EmptySegmentError,
   MalformedResetSummaryError,
   ResetInProgressError,
+  SynthesisInProgressError,
 } from './session-reset-errors.js';
+import { computeNextSegmentIndex } from './segment-counter.js';
+import { effectiveResetSnapshots } from './effective-reset-snapshots.js';
 
 export interface HandlerForReset {
   getCurrentSegmentMessages(threadId: number): readonly CouncilMessage[];
@@ -28,6 +32,9 @@ export interface HandlerForReset {
   // signal the reset guard sees zero deliberation in flight and seals before
   // the queued message reaches runDeliberation.
   hasPendingClassifications(threadId: number): boolean;
+  // v0.5.2.a bidirectional lock: /councilreset refuses while /councildone
+  // synthesis is in progress to prevent segment_index collision.
+  isSynthesisInFlight(threadId: number): boolean;
   setResetInFlight(threadId: number, v: boolean): void;
   sealCurrentSegment(threadId: number, snapshotId: string): void;
   openNewSegment(threadId: number): void;
@@ -51,6 +58,7 @@ export interface ResetResult {
 export class SessionReset {
   constructor(
     private db: ResetSnapshotDB,
+    private artifactDb: ArtifactDB,
     private facilitator: FacilitatorForReset,
   ) {}
 
@@ -93,6 +101,14 @@ export class SessionReset {
       throw new DeliberationInProgressError(threadId);
     }
 
+    // v0.5.2.a bidirectional lock: /councildone synthesis seals the same
+    // segment — a concurrent /councilreset would produce a second snapshot
+    // row targeting the same segment_index. The matching direction lives in
+    // ArtifactService: it refuses while resetInFlight is true.
+    if (handler.isSynthesisInFlight(threadId)) {
+      throw new SynthesisInProgressError(threadId);
+    }
+
     if (handler.isResetInFlight(threadId)) {
       throw new ResetInProgressError(threadId);
     }
@@ -108,7 +124,12 @@ export class SessionReset {
       // Prepend the existing snapshot markdowns as a single synthetic human
       // message so the facilitator keeps rolling every prior sealed summary
       // forward into the next one.
-      const existing = this.db.listSnapshotsForThread(threadId);
+      //
+      // v0.5.2.a codex round-5 P2: use effectiveResetSnapshots so any reset
+      // SUPERSEDED by a later /councildone artifact is dropped. Spec §0:
+      // /councildone is a closing primitive; pre-artifact reset content
+      // must NOT leak into post-artifact /councilreset prior-summary blocks.
+      const existing = effectiveResetSnapshots(threadId, this.db, this.artifactDb);
       const priorSummariesMsg: CouncilMessage | null =
         existing.length > 0
           ? {
@@ -163,16 +184,13 @@ export class SessionReset {
       const snapshotId = randomUUID();
 
       // segmentIndex is persisted as a monotonically-increasing DB metadata
-      // column. Deriving it from the in-memory segments array alone would
-      // collide on the UNIQUE (thread_id, segment_index) constraint after a
-      // process restart, because the in-memory session rebuilds at index 0
-      // while the old snapshot rows still live in SQLite. Take max(existing)+1
-      // from the DB and fall back to the in-memory index only for the first
-      // reset on a fresh thread.
-      const segmentIndex =
-        existing.length > 0
-          ? Math.max(...existing.map((s) => s.segmentIndex)) + 1
-          : handler.getSegments(threadId).length - 1;
+      // column. v0.5.2.a: computeNextSegmentIndex checks BOTH reset_snapshots
+      // and council_artifacts so the counter stays monotonic across /councilreset
+      // and /councildone seals, surviving process restarts regardless of which
+      // seal mechanism last ran.
+      const segmentIndex = computeNextSegmentIndex(
+        threadId, this.db, this.artifactDb, handler,
+      );
 
       const snapshot: ResetSnapshot = {
         snapshotId,

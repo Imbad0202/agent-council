@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-04-26
+
+### Added
+
+- `/councildone [universal|decision]` user command synthesizes a TL;DR-bearing markdown artifact from the current segment's discussion, persists it, and opens a new segment. Idempotent: a second `/councildone` on an empty new segment returns the cached artifact (zero LLM calls).
+- `/councilshow <id>` retrieves a previously created artifact's full content (chunked at 4096 chars on Telegram).
+- New `artifact-synthesizer` worker `role_type` (excluded from the peer pool, never invoked during normal deliberation). See `docs/synthesizer-config.md`.
+- Bidirectional `synthesisInFlight` lock: `/councildone` and `/councilreset` mutually exclude one another; `runDeliberation` refuses while synthesis is in flight.
+- New `council_artifacts` table in `data/council.db` (additive migration).
+- New `EventMap['artifact.created']` event (broadcast only).
+
+### Changed
+
+- `AgentConfig.roleType` is now optional `WorkerRoleType | undefined`. Use `effectiveRoleType()` to resolve `undefined` → `'peer'` at use sites.
+- `src/index.ts` startup provider + listener fallback prefer the first peer config.
+- `SessionReset.reset` segment-index calculation now consults BOTH `session_reset_snapshots` and `council_artifacts` via the shared `computeNextSegmentIndex` helper.
+- `CustomProvider` thrown errors now carry `.status` so `isHardFail` can distinguish 4xx (hard) vs 429/5xx (retry).
+
+### Notes
+
+- Concurrent retry storm under provider hang is a known limitation; spec §5 documents it. v0.5.3+ AbortSignal threading is the proper fix.
+
 ## [0.5.1] - 2026-04-23
 
 ### Added

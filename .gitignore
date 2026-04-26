@@ -13,3 +13,9 @@ mockups/assets/
 
 # Private ROADMAP lives in claude-memory-sync (花花/roadmaps/), not this public repo
 ROADMAP.md
+
+# Git worktrees (used by subagent-driven-development for v0.5.2.a impl, etc)
+.worktrees/
+
+# Local codex review transcripts (scratch, not for PR diffs)
+.codex-review*.md
