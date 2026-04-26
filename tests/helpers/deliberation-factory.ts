@@ -62,6 +62,12 @@ export interface RealHandlerBundle {
   workers: AgentWorker[];
   sendFn: ReturnType<typeof vi.fn>;
   db: ResetSnapshotDB;
+  // Single ArtifactDB instance shared by SessionReset (for reading
+  // segment_index from sealed artifacts in computeNextSegmentIndex) and any
+  // ArtifactService composed on top of this bundle. Two distinct :memory:
+  // instances would silently break the cross-table monotonic counter — each
+  // side would only see half the segment_index history.
+  artifactDb: ArtifactDB;
   sessionReset: SessionReset;
   facilitatorWorker: AgentWorker;
   providers: {
@@ -130,13 +136,14 @@ export function buildRealHandler(options: BuildRealHandlerOptions = {}): RealHan
   const workers = [workerA, workerB];
   const sendFn = vi.fn().mockResolvedValue(undefined);
   const db = new ResetSnapshotDB(':memory:');
+  const artifactDb = new ArtifactDB(':memory:');
 
   const handler = new DeliberationHandler(bus, workers, minConfig, sendFn, {
     facilitatorWorker,
     resetSnapshotDB: db,
   });
 
-  const sessionReset = new SessionReset(db, new ArtifactDB(':memory:'), facilitatorWorker);
+  const sessionReset = new SessionReset(db, artifactDb, facilitatorWorker);
 
   return {
     handler,
@@ -144,6 +151,7 @@ export function buildRealHandler(options: BuildRealHandlerOptions = {}): RealHan
     workers,
     sendFn,
     db,
+    artifactDb,
     sessionReset,
     facilitatorWorker,
     providers: { claude, openai, facilitator },
@@ -165,7 +173,8 @@ export function buildRealHandler(options: BuildRealHandlerOptions = {}): RealHan
 
 export interface ArtifactBundle extends RealHandlerBundle {
   artifactService: ArtifactService;
-  artifactDb: ArtifactDB;
+  // artifactDb is inherited from RealHandlerBundle — same instance that
+  // SessionReset uses for cross-table segment counter reads.
   synthProvider: StubProvider;
   synthesizerConfig: AgentConfig;
 }
@@ -226,12 +235,15 @@ export function buildArtifactBundle(options: BuildArtifactBundleOptions = {}): A
   const artifactBody = options.artifactBody ?? DEFAULT_ARTIFACT_BODY;
   const base = buildRealHandler(options);
 
-  const artifactDb = new ArtifactDB(':memory:');
+  // CRITICAL: reuse base.artifactDb so SessionReset and ArtifactService
+  // see the SAME artifact rows. computeNextSegmentIndex reads from the
+  // ArtifactDB instance passed in — two distinct :memory: DBs would each
+  // see only half of the cross-table segment_index history.
   const synthProvider = makeStubProvider('mock-synth', artifactBody);
 
   const artifactService = new ArtifactService({
     synthesizerConfig: SYNTH_AGENT_CONFIG,
-    artifactDb,
+    artifactDb: base.artifactDb,
     resetDb: base.db,
     handler: base.handler,
     bus: base.bus,
@@ -240,7 +252,6 @@ export function buildArtifactBundle(options: BuildArtifactBundleOptions = {}): A
   return {
     ...base,
     artifactService,
-    artifactDb,
     synthProvider,
     synthesizerConfig: SYNTH_AGENT_CONFIG,
   };
