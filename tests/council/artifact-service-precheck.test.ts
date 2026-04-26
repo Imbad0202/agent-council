@@ -258,7 +258,9 @@ describe('ArtifactService Phase 1 — pre-checks', () => {
 
       // Current segment has a message → cache is stale, fast-path should NOT trigger.
       // Empty-segment guard also won't fire because messages.length > 0.
-      // synthesisInFlight = false → hits Phase 2/3 stub.
+      // synthesisInFlight = false → Phase 2/3 runs (provider call expected but will throw
+      // due to missing API key in test environment — the important thing is that the
+      // cached row is NOT returned directly).
       const svc = makeService({
         artifactDb,
         resetDb,
@@ -267,7 +269,9 @@ describe('ArtifactService Phase 1 — pre-checks', () => {
         }),
       });
 
-      await expect(svc.synthesize(THREAD, 'universal')).rejects.toThrow('Phase 2/3 not yet implemented');
+      // Phase 2/3 is now implemented; it will attempt to call the provider and throw
+      // (no API key in test env) — not return the stale cached row.
+      await expect(svc.synthesize(THREAD, 'universal')).rejects.toThrow();
     });
 
     it('does NOT return cached when cached.segment_index does not match lastSealedSegmentIndex', async () => {
@@ -336,14 +340,6 @@ describe('ArtifactService Phase 1 — pre-checks', () => {
     });
   });
 
-  describe('Phase 2/3 stub', () => {
-    it('throws stub error when all pre-checks pass and cache miss — proving Phase 2 is not yet implemented', async () => {
-      const svc = makeService({
-        handler: makeHandler({
-          segments: [{ snapshotId: null, messages: [{ id: 'msg-1' }] }],
-        }),
-      });
-      await expect(svc.synthesize(THREAD, 'universal')).rejects.toThrow('Phase 2/3 not yet implemented (Task 12)');
-    });
-  });
+  // Phase 2/3 stub describe block removed in Task 12 — synthesis is now implemented.
+  // Coverage of the full synthesis pipeline lives in artifact-service-synthesis.test.ts.
 });

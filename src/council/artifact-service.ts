@@ -4,6 +4,7 @@ import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import { ArtifactDB, type ArtifactRow } from './artifact-db.js';
 import {
   MissingSynthesizerConfigError,
+  MalformedArtifactError,
   ArtifactResetInFlightError,
   ArtifactDeliberationInFlightError,
   PendingClassificationError,
@@ -11,14 +12,8 @@ import {
   ArtifactEmptySegmentError,
   SynthesisAlreadyRunningError,
 } from './artifact-errors.js';
-import { type Preset } from './artifact-prompt.js';
-
-// Phase 2/3 forward-staged imports — used in Task 12 (synthesis + commit phases).
-// Kept here so the Task 12 implementer doesn't have to add them mid-feature;
-// tsc passes today because tsconfig.json doesn't enable `noUnusedLocals`.
-import { MalformedArtifactError } from './artifact-errors.js';
+import { type Preset, buildArtifactPrompt, parseArtifact } from './artifact-prompt.js';
 import { computeNextSegmentIndex } from './segment-counter.js';
-import { buildArtifactPrompt, parseArtifact } from './artifact-prompt.js';
 import { invokeWithRetry } from './artifact-invoke.js';
 import { createProvider } from '../worker/providers/factory.js';
 
@@ -98,8 +93,67 @@ export class ArtifactService {
     if (currentSegment.messages.length === 0) throw new ArtifactEmptySegmentError();
     if (this.deps.handler.isSynthesisInFlight(threadId)) throw new SynthesisAlreadyRunningError(threadId);
 
-    // Phase 2 + 3 are added in Task 12.
-    throw new Error('Phase 2/3 not yet implemented (Task 12)');
+    // === Phase 2: synthesis (no segment mutation) ===
+    this.deps.handler.setSynthesisInFlight(threadId, true);
+    try {
+      const provider = createProvider(this.deps.synthesizerConfig.provider);
+      const { messages, options } = buildArtifactPrompt(
+        preset,
+        currentSegment.messages,
+        this.deps.synthesizerConfig.model,
+      );
+      const response = await invokeWithRetry(provider, messages, options);
+
+      const parsed = parseArtifact(response.content);
+      if (!parsed.tldr) throw new MalformedArtifactError(response.content);
+
+      // === Phase 3: commit ===
+      const newSegmentIndex = computeNextSegmentIndex(
+        threadId, this.deps.resetDb, this.deps.artifactDb, this.deps.handler,
+      );
+      const newSeq = (this.deps.artifactDb.maxThreadLocalSeq(threadId) ?? 0) + 1;
+
+      this.deps.handler.sealCurrentSegment(threadId, null);
+
+      let inserted: ArtifactRow;
+      try {
+        inserted = this.deps.artifactDb.insert({
+          thread_id: threadId,
+          segment_index: newSegmentIndex,
+          thread_local_seq: newSeq,
+          preset,
+          content_md: response.content,
+          created_at: new Date().toISOString(),
+          synthesis_model: response.modelUsed ?? options.model,
+          synthesis_token_usage_json: JSON.stringify(response.tokensUsed),
+        });
+      } catch (insertErr) {
+        this.deps.handler.unsealCurrentSegment(threadId);
+        throw insertErr;
+      }
+
+      try {
+        this.deps.handler.openNewSegment(threadId);
+      } catch (openErr) {
+        // Best-effort rollback (round-8 P2-3).
+        try { this.deps.artifactDb.deleteById(inserted.id); }
+        catch (delErr) { console.error('[ArtifactService] rollback: deleteById failed', delErr); }
+        try { this.deps.handler.unsealCurrentSegment(threadId); }
+        catch (unsealErr) { console.error('[ArtifactService] rollback: unsealCurrentSegment failed', unsealErr); }
+        throw openErr;
+      }
+
+      this.deps.bus.emit('artifact.created', {
+        threadId,
+        segmentIndex: newSegmentIndex,
+        threadLocalSeq: newSeq,
+        preset,
+      });
+
+      return inserted;
+    } finally {
+      this.deps.handler.setSynthesisInFlight(threadId, false);
+    }
   }
 
   fetchByThreadLocalSeq(threadId: number, seq: number): ArtifactRow | null {
