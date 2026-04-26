@@ -39,7 +39,11 @@ export class CustomProvider extends BaseProvider {
     });
 
     if (!res.ok) {
-      throw new Error(`Custom provider error: ${res.status} ${await res.text()}`);
+      const err = Object.assign(
+        new Error(`Custom provider error: ${res.status} ${await res.text()}`),
+        { status: res.status },
+      );
+      throw err;
     }
 
     const data = await res.json() as {
