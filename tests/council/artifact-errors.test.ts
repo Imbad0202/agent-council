@@ -48,4 +48,12 @@ describe('artifact errors', () => {
     const e = new MalformedArtifactError('no TL;DR here');
     expect(e.rawResponse).toBe('no TL;DR here');
   });
+
+  it('threadId-bearing errors expose threadId payload', () => {
+    expect(new SynthesisAlreadyRunningError(7).threadId).toBe(7);
+    expect(new ArtifactResetInFlightError(8).threadId).toBe(8);
+    expect(new ArtifactDeliberationInFlightError(9).threadId).toBe(9);
+    expect(new PendingClassificationError(10).threadId).toBe(10);
+    expect(new ArtifactBlindReviewActiveError(11).threadId).toBe(11);
+  });
 });
