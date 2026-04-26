@@ -309,6 +309,11 @@ export class DeliberationHandler {
     return segs[segs.length - 1].messages;
   }
 
+  // HandlerForArtifact adapter — returns the shape ArtifactService expects.
+  public getCurrentSegment(threadId: number): { messages: readonly CouncilMessage[] } {
+    return { messages: this.getCurrentSegmentMessages(threadId) };
+  }
+
   public sealCurrentSegment(threadId: number, snapshotId: string | null): void {
     const session = this.getSession(threadId);
     const last = session.segments[session.segments.length - 1];

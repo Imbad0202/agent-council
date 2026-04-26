@@ -36,7 +36,17 @@ import { ExecutionReviewer } from './execution/reviewer.js';
 import { parseArgs, createAdapter } from './adapters/factory.js';
 import { buildRichMetadata } from './adapters/metadata.js';
 import type { AdapterFactoryConfig } from './adapters/factory.js';
-import type { LLMProvider } from './types.js';
+import { effectiveRoleType, type AgentConfig, type LLMProvider } from './types.js';
+import { ArtifactService } from './council/artifact-service.js';
+import type { ArtifactAdapter } from './adapters/telegram.js';
+
+function isArtifactAdapter(a: unknown): a is ArtifactAdapter {
+  return typeof (a as ArtifactAdapter).setArtifactWiring === 'function';
+}
+
+function pickFirstPeerConfig(agents: AgentConfig[]): AgentConfig {
+  return agents.find(a => effectiveRoleType(a) === 'peer') ?? agents[0];
+}
 
 function hasDefaultPromptUser(a: unknown): a is DefaultCritiquePromptAdapter {
   return typeof (a as DefaultCritiquePromptAdapter).defaultPromptUser === 'function';
@@ -102,10 +112,7 @@ async function main() {
   console.log(`[v0.2.1] Loaded ${agentConfigs.length} agents: ${agentConfigs.map((a) => `${a.name}(${a.provider})`).join(', ')}`);
 
   // Split agents into peers and facilitator
-  // TODO(Task 16): use effectiveRoleType to also exclude 'artifact-synthesizer'
-  // (currently any agent with roleType: 'artifact-synthesizer' would join deliberation
-  // as a peer; not yet a deployed concern because no synthesizer config exists pre-Task 16)
-  const peerConfigs = agentConfigs.filter((a) => a.roleType !== 'facilitator');
+  const peerConfigs = agentConfigs.filter((a) => effectiveRoleType(a) === 'peer');
   const facilitatorConfig = agentConfigs.find((a) => a.roleType === 'facilitator');
 
   // Cache providers so agents sharing a provider reuse the same client instance
@@ -131,7 +138,7 @@ async function main() {
   }
 
   // Adapter: abstracts Telegram / CLI transport
-  const listenerAgent = councilConfig.participation?.listenerAgent || agentConfigs[0].id;
+  const listenerAgent = councilConfig.participation?.listenerAgent || pickFirstPeerConfig(agentConfigs).id;
   const adapterConfig: AdapterFactoryConfig = {
     cli: { verbose: args.verbose },
     telegram: {
@@ -155,7 +162,7 @@ async function main() {
   const bus = new EventBus();
 
   // Infrastructure: main provider for classification & decomposition
-  const mainProvider = getOrCreateProvider(agentConfigs[0].provider);
+  const mainProvider = getOrCreateProvider(pickFirstPeerConfig(agentConfigs).provider);
 
   // Classification layer
   new IntentGate(bus, mainProvider, councilConfig.systemModels.intentClassification);
@@ -219,6 +226,19 @@ async function main() {
     console.log('SessionReset initialized');
   }
 
+  // ArtifactService — lazy: if no synthesizer config exists, synthesize()
+  // will throw MissingSynthesizerConfigError at command time (spec §10).
+  // Do NOT fail at startup so facilitator-less deployments still boot.
+  const synthesizerConfig = agentConfigs.find(a => effectiveRoleType(a) === 'artifact-synthesizer') ?? null;
+  const artifactService = new ArtifactService({
+    synthesizerConfig,
+    artifactDb: artifactDB,
+    resetDb: resetSnapshotDB,
+    handler: deliberationHandler,
+    bus,
+  });
+  console.log('ArtifactService initialized' + (synthesizerConfig ? ` (synthesizer: ${synthesizerConfig.id})` : ' (no synthesizer config — /councildone will reply "not configured")'));
+
   // Wire BlindReviewDB + persist-failed event
   const blindReviewDB = new BlindReviewDB(resolve('data/council.db'));
   const blindReviewStore = deliberationHandler.getBlindReviewStore();
@@ -259,6 +279,12 @@ async function main() {
         ? { reset: sessionReset, deliberationHandler }
         : {}),
     });
+  }
+
+  // Wire /councildone + /councilshow into the listener bot (Telegram only;
+  // adapters without setArtifactWiring silently skip).
+  if (isArtifactAdapter(adapter)) {
+    adapter.setArtifactWiring({ artifactService });
   }
 
   // Wire blind-review commands into the listener bot (no-op for adapters without setBlindReviewWiring)
@@ -359,6 +385,7 @@ async function main() {
               ? { sessionReset, deliberationHandler }
               : {}),
           },
+          { artifactService, threadId: cliThreadId },
         )
       : undefined;
 
