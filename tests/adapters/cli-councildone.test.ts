@@ -96,6 +96,46 @@ describe('/councildone CLI', () => {
     expect((svc.synthesize as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
   });
 
+  // Spec §6: extra args after a valid preset must be rejected — the parser
+  // does not split-and-take-first; the entire trimmed arg string must equal
+  // 'universal' or 'decision' (or be empty). `decision foo` is NOT a valid
+  // invocation — it must surface the same "unknown preset" error.
+  it('rejects "decision foo" (extra args after valid preset per spec §6)', async () => {
+    const svc = makeArtifactService();
+    const handler = new CliCommandHandler(
+      sessions,
+      memDb,
+      (line) => output.push(line),
+      {},
+      { artifactService: svc, threadId: THREAD },
+    );
+
+    await handler.handleAsync('councildone', 'decision foo');
+
+    expect(output.some(line => line.includes('unknown preset'))).toBe(true);
+    expect((svc.synthesize as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  // Spec §6: preset matching is case-sensitive — `Decision`, `UNIVERSAL`,
+  // `Universal` must all reject. Strict equality (`trimmed === 'decision'`)
+  // is the contract; any case-insensitive normalization would silently
+  // expand the accepted surface and drift from the spec.
+  it('rejects "Decision" (case-sensitive per spec §6)', async () => {
+    const svc = makeArtifactService();
+    const handler = new CliCommandHandler(
+      sessions,
+      memDb,
+      (line) => output.push(line),
+      {},
+      { artifactService: svc, threadId: THREAD },
+    );
+
+    await handler.handleAsync('councildone', 'Decision');
+
+    expect(output.some(line => line.includes('unknown preset'))).toBe(true);
+    expect((svc.synthesize as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
   it('uses universal preset when arg is empty', async () => {
     const synthesize = vi.fn(async () => makeArtifactRow({ preset: 'universal', thread_local_seq: 1 }));
     const svc = makeArtifactService({ synthesize });
