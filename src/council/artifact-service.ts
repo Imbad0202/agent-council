@@ -135,11 +135,14 @@ export class ArtifactService {
       try {
         this.deps.handler.openNewSegment(threadId);
       } catch (openErr) {
-        // Best-effort rollback (round-8 P2-3).
+        // Best-effort rollback (round-8 P2-3): each step independently wrapped
+        // so a failing deleteById does NOT skip the unseal (and vice versa).
+        // The original openErr is rethrown after both cleanup attempts complete,
+        // regardless of cleanup success.
         try { this.deps.artifactDb.deleteById(inserted.id); }
-        catch (delErr) { console.error('[ArtifactService] rollback: deleteById failed', delErr); }
+        catch (delErr) { console.error('[ArtifactService] rollback: deleteById failed after openNewSegment failure', delErr); }
         try { this.deps.handler.unsealCurrentSegment(threadId); }
-        catch (unsealErr) { console.error('[ArtifactService] rollback: unsealCurrentSegment failed', unsealErr); }
+        catch (unsealErr) { console.error('[ArtifactService] rollback: unsealCurrentSegment failed after openNewSegment failure', unsealErr); }
         throw openErr;
       }
 
