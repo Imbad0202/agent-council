@@ -120,4 +120,8 @@ export class ArtifactDB {
       .get(threadId, seq) as ArtifactRow | undefined;
     return row ?? null;
   }
+
+  close(): void {
+    this.db.close();
+  }
 }

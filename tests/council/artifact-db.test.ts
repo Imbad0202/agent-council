@@ -57,15 +57,14 @@ describe('ArtifactDB: findByThread', () => {
   });
 
   it('returns all rows for a thread, ordered by segment_index ASC', () => {
+    // Insert in non-monotonic order to verify ORDER BY clause is load-bearing
+    db.insert(makeInput({ thread_id: 1, segment_index: 2, thread_local_seq: 3, preset: 'universal', content_md: 'u2' }));
     db.insert(makeInput({ thread_id: 1, segment_index: 0, thread_local_seq: 1, preset: 'universal', content_md: 'u0' }));
     db.insert(makeInput({ thread_id: 1, segment_index: 1, thread_local_seq: 2, preset: 'decision', content_md: 'd1' }));
-    db.insert(makeInput({ thread_id: 1, segment_index: 2, thread_local_seq: 3, preset: 'universal', content_md: 'u2' }));
 
     const rows = db.findByThread(1);
     expect(rows).toHaveLength(3);
-    expect(rows[0].segment_index).toBe(0);
-    expect(rows[1].segment_index).toBe(1);
-    expect(rows[2].segment_index).toBe(2);
+    expect(rows.map(r => r.segment_index)).toEqual([0, 1, 2]);
   });
 
   it('does NOT return rows from other threads', () => {
@@ -195,5 +194,18 @@ describe('ArtifactDB: fetchByThreadLocalSeq (cross-thread isolation)', () => {
     }));
     expect(row.synthesis_model).toBe('claude-opus-4-7');
     expect(row.synthesis_token_usage_json).toBe('{"input":100,"output":200}');
+  });
+});
+
+describe('ArtifactDB: close', () => {
+  it('closes the underlying connection', () => {
+    const db = new ArtifactDB(':memory:');
+    db.close();
+    // After close, prepare/run on the underlying handle should throw —
+    // we test indirectly via insert which uses prepare:
+    expect(() => db.insert({
+      thread_id: 1, segment_index: 0, thread_local_seq: 1,
+      preset: 'universal', content_md: 'x', created_at: 't0',
+    })).toThrow();
   });
 });
