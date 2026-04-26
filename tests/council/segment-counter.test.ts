@@ -1,11 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { computeNextSegmentIndex } from '../../src/council/segment-counter.js';
+import type { HandlerForCounter } from '../../src/council/segment-counter.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
 import { ArtifactDB } from '../../src/council/artifact-db.js';
-
-interface MiniHandler {
-  getSegments(threadId: number): { snapshotId: string | null }[];
-}
 
 const THREAD_ID = 42;
 const OTHER_THREAD = 99;
@@ -35,7 +32,7 @@ function makeArtifact(threadId: number, segmentIndex: number, seq: number) {
 describe('computeNextSegmentIndex', () => {
   let resetDb: ResetSnapshotDB;
   let artifactDb: ArtifactDB;
-  let handler: MiniHandler;
+  let handler: HandlerForCounter;
 
   beforeEach(() => {
     resetDb = new ResetSnapshotDB(':memory:');

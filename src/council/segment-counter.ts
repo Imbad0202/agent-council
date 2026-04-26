@@ -1,7 +1,7 @@
 import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type { ArtifactDB } from './artifact-db.js';
 
-interface HandlerForCounter {
+export interface HandlerForCounter {
   getSegments(threadId: number): readonly { snapshotId: string | null }[];
 }
 
@@ -23,5 +23,7 @@ export function computeNextSegmentIndex(
   const artIdx = artifactDb.findByThread(threadId).map(r => r.segment_index);
   const all = [...resetIdx, ...artIdx];
   if (all.length > 0) return Math.max(...all) + 1;
+  // Precondition: caller ensures at least one segment is open when both
+  // tables are empty, so this fallback is always >= 0 in practice.
   return handler.getSegments(threadId).length - 1;
 }
