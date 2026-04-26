@@ -227,6 +227,7 @@ async function main() {
       pvgRotateStore,
       critiqueStore,
       resetSnapshotDB,
+      artifactDB,
     },
   );
   console.log('DeliberationHandler initialized');

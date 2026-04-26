@@ -1,6 +1,7 @@
 import type { EventBus } from '../events/bus.js';
 import type { AgentWorker } from '../worker/agent-worker.js';
 import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
+import type { ArtifactDB } from './artifact-db.js';
 import type {
   CouncilConfig,
   CouncilMessage,
@@ -126,6 +127,10 @@ export class DeliberationHandler {
   private critiqueStore: HumanCritiqueStore | undefined;
   private critiqueTimeoutMs: number;
   private resetSnapshotDB: ResetSnapshotDB | undefined;
+  // v0.5.2.a codex round-4 P2: getSnapshotPrefix needs to know if a thread
+  // has a /councildone artifact sealed AFTER its latest reset, to suppress
+  // stale reset-summary leakage past the artifact closing primitive.
+  private artifactDB: ArtifactDB | undefined;
   private facilitatorIntervention:
     | {
         recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
@@ -165,6 +170,11 @@ export class DeliberationHandler {
       critiqueStore?: HumanCritiqueStore;
       critiqueTimeoutMs?: number;
       resetSnapshotDB?: ResetSnapshotDB;
+      // v0.5.2.a codex round-4 P2: optional ArtifactDB so getSnapshotPrefix
+      // can suppress stale reset-summary leakage past /councildone boundary.
+      // Optional: handlers without artifactDB (legacy / pre-v0.5.2.a tests)
+      // simply behave as before.
+      artifactDB?: ArtifactDB;
       // v0.5.2 P1-B: optional facilitator-driven intervention hook. When set,
       // runDeliberation calls these inline after every agent.responded emit so
       // the LLM call resolves WITHIN the deliberationInFlight window. Narrow
@@ -188,6 +198,7 @@ export class DeliberationHandler {
     this.critiqueStore = options?.critiqueStore;
     this.critiqueTimeoutMs = options?.critiqueTimeoutMs ?? DEFAULT_CRITIQUE_TIMEOUT_MS;
     this.resetSnapshotDB = options?.resetSnapshotDB;
+    this.artifactDB = options?.artifactDB;
     // v0.5.2 P1-B (codex rounds 1-2):
     // - Round-1: a caller wiring only facilitatorWorker silently lost
     //   mid-round steer/challenge interventions when the agent.responded
@@ -416,16 +427,47 @@ export class DeliberationHandler {
     if (!this.resetSnapshotDB) return null;
     const session = this.getSession(threadId);
     for (let i = session.segments.length - 1; i >= 0; i--) {
-      const snapshotId = session.segments[i].snapshotId;
+      const seg = session.segments[i];
+      // v0.5.2.a codex round-4 P2: a sealed segment with null snapshotId is
+      // an /councildone artifact boundary (only `unsealCurrentSegment` also
+      // produces null, but it pairs with endedAt=null — i.e. the segment
+      // becomes unsealed again). The artifact is the closing primitive per
+      // spec §0; older reset summaries must NOT leak through it. Stop the
+      // traversal and return null. Workers in segments after a /councildone
+      // start with a clean prior context (or whatever segment-2's
+      // deliberation produces), as designed.
+      if (seg.endedAt !== null && !seg.snapshotId) {
+        return null;
+      }
+      const snapshotId = seg.snapshotId;
       if (!snapshotId) continue;
       const snap = this.resetSnapshotDB.getSnapshot(snapshotId);
       if (snap) return snap.summaryMarkdown;
     }
     // Post-restart DB fallback: listSnapshotsForThread returns rows ordered
     // by segment_index ASC, so the last element is the most recent snapshot.
+    //
+    // v0.5.2.a codex round-4 P2: but only fall back to reset summary if no
+    // artifact has been sealed AFTER the latest reset for this thread. If
+    // artifactDb.findByThread produces a row with segment_index >= the
+    // latest reset's segment_index, the artifact is the closer primitive
+    // and the carry-forward should NOT leak the older reset summary. We
+    // detect this conservatively: if EITHER table reports a sealed segment
+    // with index ≥ the latest reset's segment_index, return null.
     const rows = this.resetSnapshotDB.listSnapshotsForThread(threadId);
     if (rows.length > 0) {
-      return rows[rows.length - 1].summaryMarkdown;
+      const latestReset = rows[rows.length - 1];
+      if (this.artifactDB) {
+        const artifactRows = this.artifactDB.findByThread(threadId);
+        const latestArtifactIdx = artifactRows.length > 0
+          ? Math.max(...artifactRows.map(r => r.segment_index))
+          : -1;
+        if (latestArtifactIdx >= latestReset.segmentIndex) {
+          // Artifact is the closer primitive — do NOT leak older reset summary.
+          return null;
+        }
+      }
+      return latestReset.summaryMarkdown;
     }
     return null;
   }
