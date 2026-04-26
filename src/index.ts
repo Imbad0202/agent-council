@@ -13,6 +13,7 @@ import { IntentGate } from './council/intent-gate.js';
 import { DeliberationHandler } from './council/deliberation.js';
 import { SessionReset } from './council/session-reset.js';
 import { ResetSnapshotDB } from './storage/reset-snapshot-db.js';
+import { ArtifactDB } from './council/artifact-db.js';
 import { CliCommandHandler } from './adapters/cli-commands.js';
 import { routeCliInput, deriveCliThreadId } from './adapters/cli-dispatch.js';
 import { CliSessionManager } from './adapters/cli-sessions.js';
@@ -182,6 +183,9 @@ async function main() {
   const pvgRotateDB = new PvgRotateDB(resolve('data/council.db'));
   const critiqueStore = new HumanCritiqueStore();
   const resetSnapshotDB = new ResetSnapshotDB(resolve('data/council.db'));
+  // v0.5.2.a: ArtifactDB shares council.db. Instantiated early so SessionReset
+  // can use the cross-table counter. Task 16 will wire it into ArtifactService.
+  const artifactDB = new ArtifactDB(resolve('data/council.db'));
   // v0.5.2 P1-B: DeliberationHandler default-wires a FacilitatorAgent
   // internally when given a facilitatorWorker, so we no longer construct
   // one here. Constructing it externally AND passing facilitatorWorker
@@ -206,7 +210,7 @@ async function main() {
   // Session reset — requires a facilitatorWorker. If none is configured,
   // /councilreset stays unwired and the command reports "not configured".
   const sessionReset = facilitatorWorker
-    ? new SessionReset(resetSnapshotDB, facilitatorWorker)
+    ? new SessionReset(resetSnapshotDB, artifactDB, facilitatorWorker)
     : undefined;
   if (sessionReset) {
     console.log('SessionReset initialized');

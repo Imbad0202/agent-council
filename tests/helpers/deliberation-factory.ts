@@ -3,6 +3,7 @@ import { DeliberationHandler } from '../../src/council/deliberation.js';
 import { EventBus } from '../../src/events/bus.js';
 import { AgentWorker } from '../../src/worker/agent-worker.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
+import { ArtifactDB } from '../../src/council/artifact-db.js';
 import { SessionReset } from '../../src/council/session-reset.js';
 import type {
   AgentConfig,
@@ -134,7 +135,7 @@ export function buildRealHandler(options: BuildRealHandlerOptions = {}): RealHan
     resetSnapshotDB: db,
   });
 
-  const sessionReset = new SessionReset(db, facilitatorWorker);
+  const sessionReset = new SessionReset(db, new ArtifactDB(':memory:'), facilitatorWorker);
 
   return {
     handler,

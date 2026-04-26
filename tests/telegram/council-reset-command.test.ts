@@ -4,6 +4,7 @@ import {
   buildCouncilHistoryHandler,
 } from '../../src/telegram/bot.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
+import { ArtifactDB } from '../../src/council/artifact-db.js';
 import { SessionReset } from '../../src/council/session-reset.js';
 
 const GROUP = 100;
@@ -25,6 +26,7 @@ function makeDelibHandler(overrides: Partial<{
     isResetInFlight: vi.fn(() => overrides.resetInFlight ?? false),
     isDeliberationInFlight: vi.fn(() => overrides.deliberationInFlight ?? false),
     hasPendingClassifications: vi.fn(() => overrides.pendingClassifications ?? false),
+    isSynthesisInFlight: vi.fn(() => false),
     setResetInFlight: vi.fn(),
     sealCurrentSegment: vi.fn(),
     openNewSegment: vi.fn(),
@@ -85,7 +87,7 @@ describe('/councilreset Telegram', () => {
   it('seals segment and replies with confirmation in the correct group + thread', async () => {
     const db = trackDb(new ResetSnapshotDB(':memory:'));
     const facilitator = makeFacilitator(VALID_SUMMARY);
-    const reset = new SessionReset(db, facilitator as never);
+    const reset = new SessionReset(db, new ArtifactDB(':memory:'), facilitator as never);
     const delib = makeDelibHandler();
     const fn = buildCouncilResetHandler(GROUP, {
       reset,
@@ -104,7 +106,7 @@ describe('/councilreset Telegram', () => {
   it('replies with BlindReviewActiveError message when blind-review is pending', async () => {
     const db = trackDb(new ResetSnapshotDB(':memory:'));
     const facilitator = makeFacilitator(VALID_SUMMARY);
-    const reset = new SessionReset(db, facilitator as never);
+    const reset = new SessionReset(db, new ArtifactDB(':memory:'), facilitator as never);
     const delib = makeDelibHandler({ blindReviewSessionId: 'br-active' });
     const fn = buildCouncilResetHandler(GROUP, {
       reset,
@@ -123,7 +125,7 @@ describe('/councilreset Telegram', () => {
   it('ignores messages from the wrong group chat', async () => {
     const db = trackDb(new ResetSnapshotDB(':memory:'));
     const facilitator = makeFacilitator(VALID_SUMMARY);
-    const reset = new SessionReset(db, facilitator as never);
+    const reset = new SessionReset(db, new ArtifactDB(':memory:'), facilitator as never);
     const delib = makeDelibHandler();
     const fn = buildCouncilResetHandler(GROUP, {
       reset,
@@ -141,7 +143,7 @@ describe('/councilreset Telegram', () => {
   it('ignores messages from bots', async () => {
     const db = trackDb(new ResetSnapshotDB(':memory:'));
     const facilitator = makeFacilitator(VALID_SUMMARY);
-    const reset = new SessionReset(db, facilitator as never);
+    const reset = new SessionReset(db, new ArtifactDB(':memory:'), facilitator as never);
     const delib = makeDelibHandler();
     const fn = buildCouncilResetHandler(GROUP, {
       reset,
@@ -165,7 +167,7 @@ describe('/councilreset Telegram', () => {
   it('normalizes missing message_thread_id to 0 (matches GatewayRouter), not chat.id', async () => {
     const db = trackDb(new ResetSnapshotDB(':memory:'));
     const facilitator = makeFacilitator(VALID_SUMMARY);
-    const reset = new SessionReset(db, facilitator as never);
+    const reset = new SessionReset(db, new ArtifactDB(':memory:'), facilitator as never);
     const delib = makeDelibHandler();
     const fn = buildCouncilResetHandler(GROUP, {
       reset,

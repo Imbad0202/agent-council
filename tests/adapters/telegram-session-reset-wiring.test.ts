@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AgentConfig } from '../../src/types.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
+import { ArtifactDB } from '../../src/council/artifact-db.js';
 import { SessionReset } from '../../src/council/session-reset.js';
 
 const mockBot = {
@@ -63,6 +64,7 @@ function makeDelibHandler() {
     isResetInFlight: vi.fn(() => false),
     isDeliberationInFlight: vi.fn(() => false),
     hasPendingClassifications: vi.fn(() => false),
+    isSynthesisInFlight: vi.fn(() => false),
     setResetInFlight: vi.fn(),
     sealCurrentSegment: vi.fn(),
     openNewSegment: vi.fn(),
@@ -82,7 +84,7 @@ describe('TelegramAdapter session-reset wiring', () => {
   it('setSessionResetWiring stashes the wiring and passes it into setupListener', async () => {
     const adapter = new TelegramAdapter(config);
     const db = new ResetSnapshotDB(':memory:');
-    const reset = new SessionReset(db, makeFacilitator() as never);
+    const reset = new SessionReset(db, new ArtifactDB(':memory:'), makeFacilitator() as never);
     const delib = makeDelibHandler();
 
     adapter.setSessionResetWiring({ reset, deliberationHandler: delib as never, db });
@@ -175,7 +177,7 @@ describe('TelegramAdapter session-reset wiring', () => {
   it('registers /councilreset and /councilhistory BEFORE the catch-all message:text handler', async () => {
     const adapter = new TelegramAdapter(config);
     const db = new ResetSnapshotDB(':memory:');
-    const reset = new SessionReset(db, makeFacilitator() as never);
+    const reset = new SessionReset(db, new ArtifactDB(':memory:'), makeFacilitator() as never);
     const delib = makeDelibHandler();
     adapter.setSessionResetWiring({ reset, deliberationHandler: delib as never, db });
 

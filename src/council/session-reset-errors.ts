@@ -55,3 +55,16 @@ export class MalformedResetSummaryError extends Error {
     this.missingSections = missingSections;
   }
 }
+
+// v0.5.2.a: /councilreset refuses while /councildone synthesis is in flight
+// (bidirectional lock — ArtifactService refuses while resetInFlight is true,
+// symmetrically). This keeps the segment-seal and the artifact-synthesis paths
+// mutually exclusive, preventing the segment_index counter from diverging.
+export class SynthesisInProgressError extends Error {
+  constructor(public readonly threadId: number) {
+    super(
+      `Synthesis in progress for thread ${threadId}; retry /councilreset shortly`,
+    );
+    this.name = 'SynthesisInProgressError';
+  }
+}

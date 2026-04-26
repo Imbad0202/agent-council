@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SessionReset } from '../../src/council/session-reset.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
+import { ArtifactDB } from '../../src/council/artifact-db.js';
 import {
   BlindReviewActiveError,
   DeliberationInProgressError,
@@ -64,6 +65,7 @@ function makeHandler(init: {
     isResetInFlight: vi.fn(() => resetInFlight),
     isDeliberationInFlight: vi.fn(() => deliberationInFlight),
     hasPendingClassifications: vi.fn(() => (init.pendingClassifications ?? 0) > 0),
+    isSynthesisInFlight: vi.fn(() => false),
     setResetInFlight: vi.fn((_: number, v: boolean) => {
       resetInFlight = v;
     }),
@@ -110,7 +112,8 @@ describe('SessionReset', () => {
     const handler = makeHandler({
       messages: [{ id: 'm1', role: 'human', content: 'debate', timestamp: 1 }],
     });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     const result = await reset.reset(handler as never, T);
 
@@ -125,7 +128,8 @@ describe('SessionReset', () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler({ blindReviewSessionId: 'br-active' });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(BlindReviewActiveError);
     expect(facilitator.respondDeterministic).not.toHaveBeenCalled();
@@ -138,7 +142,8 @@ describe('SessionReset', () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler();
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await reset.reset(handler as never, T);
 
@@ -156,7 +161,8 @@ describe('SessionReset', () => {
       }),
     };
     const handler = makeHandler();
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toThrow('boom');
     expect(handler.sealCurrentSegment).not.toHaveBeenCalled();
@@ -190,7 +196,8 @@ describe('SessionReset', () => {
     ].join('\n');
     const facilitator = makeFacilitator(malformedSummary);
     const handler = makeHandler();
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(
       MalformedResetSummaryError,
@@ -216,7 +223,8 @@ describe('SessionReset', () => {
     ].join('\n');
     const facilitator = makeFacilitator(incompleteSummary);
     const handler = makeHandler();
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(
       MalformedResetSummaryError,
@@ -235,7 +243,8 @@ describe('SessionReset', () => {
     });
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler();
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toThrow('db write failed');
     expect(handler.sealCurrentSegment).not.toHaveBeenCalled();
@@ -252,7 +261,8 @@ describe('SessionReset', () => {
     handler.sealCurrentSegment.mockImplementation(() => {
       throw new Error('seal failed');
     });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toThrow('seal failed');
     expect(db.listSnapshotsForThread(T)).toHaveLength(0);
@@ -265,7 +275,8 @@ describe('SessionReset', () => {
     handler.openNewSegment.mockImplementation(() => {
       throw new Error('open failed');
     });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toThrow('open failed');
     expect(db.listSnapshotsForThread(T)).toHaveLength(0);
@@ -281,7 +292,8 @@ describe('SessionReset', () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler({ resetInFlight: true });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(ResetInProgressError);
     expect(facilitator.respondDeterministic).not.toHaveBeenCalled();
@@ -294,7 +306,8 @@ describe('SessionReset', () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler({ deliberationInFlight: true });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(
       DeliberationInProgressError,
@@ -320,7 +333,8 @@ describe('SessionReset', () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler({ pendingClassifications: 1 });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(
       DeliberationInProgressError,
@@ -335,7 +349,8 @@ describe('SessionReset', () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler();
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await reset.reset(handler as never, T);
 
@@ -351,7 +366,8 @@ describe('SessionReset', () => {
       }),
     };
     const handler = makeHandler();
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toThrow();
     expect(handler.setResetInFlight).toHaveBeenLastCalledWith(T, false);
@@ -373,7 +389,8 @@ describe('SessionReset', () => {
     });
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler(); // segments = [one empty open segment]
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     const result = await reset.reset(handler as never, T);
 
@@ -398,7 +415,8 @@ describe('SessionReset', () => {
       originalRecord(snap);
       db.close();
     });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toMatchObject({
       message: 'seal failed',
@@ -438,7 +456,8 @@ describe('SessionReset', () => {
     const handler = makeHandler({
       messages: [{ id: 'm', role: 'human', content: 'live turn', timestamp: 1 }],
     });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await reset.reset(handler as never, T);
 
@@ -489,7 +508,8 @@ describe('SessionReset', () => {
     const handler = makeHandler({
       messages: [{ id: 'm99', role: 'human', content: 'new debate topic', timestamp: 99 }],
     });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await reset.reset(handler as never, T);
 
@@ -512,7 +532,8 @@ describe('SessionReset', () => {
     const db = new ResetSnapshotDB(':memory:');
     const facilitator = makeFacilitator(VALID_SUMMARY);
     const handler = makeHandler({ messages: [] });
-    const reset = new SessionReset(db, facilitator as never);
+    const artifactDb = new ArtifactDB(':memory:');
+    const reset = new SessionReset(db, artifactDb, facilitator as never);
 
     await expect(reset.reset(handler as never, T)).rejects.toBeInstanceOf(EmptySegmentError);
     expect(facilitator.respondDeterministic).not.toHaveBeenCalled();
