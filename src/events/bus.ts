@@ -19,6 +19,7 @@ export interface EventMap {
   'memory.injected': { threadId: number; agentId: string; memories: string[] };
   'agent.responding': { threadId: number; agentId: string; role: AgentRole };
   'agent.responded': { threadId: number; agentId: string; response: ProviderResponse; role: AgentRole; classification: ResponseClassification };
+  'artifact.created': { threadId: number; segmentIndex: number; threadLocalSeq: number; preset: 'universal' | 'decision' };
   'pattern.detected': { threadId: number; pattern: PatternType; targetAgent: string };
   'convergence.detected': { threadId: number; angle: string };
   'facilitator.intervened': { threadId: number; action: FacilitatorAction; content: string; targetAgent?: string };
