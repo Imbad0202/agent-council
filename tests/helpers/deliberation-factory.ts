@@ -4,6 +4,7 @@ import { EventBus } from '../../src/events/bus.js';
 import { AgentWorker } from '../../src/worker/agent-worker.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
 import { ArtifactDB } from '../../src/council/artifact-db.js';
+import { ArtifactService } from '../../src/council/artifact-service.js';
 import { SessionReset } from '../../src/council/session-reset.js';
 import type {
   AgentConfig,
@@ -36,7 +37,7 @@ export interface StubProvider {
   calls: { messages: ProviderMessage[] }[];
 }
 
-function makeStubProvider(name: string, responseContent: string): StubProvider {
+export function makeStubProvider(name: string, responseContent: string): StubProvider {
   const calls: { messages: ProviderMessage[] }[] = [];
   const provider: LLMProvider = {
     name,
@@ -146,5 +147,101 @@ export function buildRealHandler(options: BuildRealHandlerOptions = {}): RealHan
     sessionReset,
     facilitatorWorker,
     providers: { claude, openai, facilitator },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ArtifactBundle — composes RealHandlerBundle + ArtifactService for
+// /councildone integration tests. The caller MUST declare:
+//
+//   vi.mock('../../src/worker/providers/factory.js', () => ({
+//     createProvider: vi.fn(),
+//   }));
+//
+// in their test file (vi.mock is hoisted per-file, not per-function), and
+// configure the mock before calling buildArtifactBundle. The synthProvider
+// parameter is what createProvider should return for the synthesizer call.
+// ---------------------------------------------------------------------------
+
+export interface ArtifactBundle extends RealHandlerBundle {
+  artifactService: ArtifactService;
+  artifactDb: ArtifactDB;
+  synthProvider: StubProvider;
+  synthesizerConfig: AgentConfig;
+}
+
+export interface BuildArtifactBundleOptions extends BuildRealHandlerOptions {
+  /** Canned response body the synthesizer provider will return. Must contain ## TL;DR. */
+  artifactBody?: string;
+}
+
+/** Default valid artifact body used when no override is provided. */
+export const DEFAULT_ARTIFACT_BODY = [
+  '## TL;DR',
+  '',
+  'The council chose option A over B for performance reasons.',
+  '',
+  '## Discussion',
+  '',
+  'Agents debated trade-offs between speed and maintainability.',
+  '',
+  '## Open questions',
+  '',
+  'How do we measure performance in production?',
+  '',
+  '## Suggested next step',
+  '',
+  'Run a benchmark suite before the next release.',
+].join('\n');
+
+// The synthesizer AgentConfig used by ArtifactService in integration tests.
+export const SYNTH_AGENT_CONFIG: AgentConfig = {
+  id: 'synth',
+  name: 'Synth',
+  provider: 'mock-synth',
+  model: 'mock-synth-model',
+  memoryDir: '.',
+  personality: '',
+  roleType: 'artifact-synthesizer',
+};
+
+/**
+ * Builds a full ArtifactBundle: all RealHandlerBundle pieces + ArtifactService
+ * wired to a shared ArtifactDB and the same ResetSnapshotDB used by SessionReset.
+ *
+ * USAGE — in each integration test file that imports this function, you MUST
+ * declare the following mock at the top of the file (vitest hoists vi.mock
+ * per-file, not per-function, so it cannot live inside the factory):
+ *
+ *   vi.mock('../../src/worker/providers/factory.js', () => ({
+ *     createProvider: vi.fn(),
+ *   }));
+ *
+ * After building the bundle, wire the factory mock so ArtifactService.synthesize
+ * uses the stub:
+ *
+ *   vi.mocked(createProvider).mockReturnValue(bundle.synthProvider.provider);
+ */
+export function buildArtifactBundle(options: BuildArtifactBundleOptions = {}): ArtifactBundle {
+  const artifactBody = options.artifactBody ?? DEFAULT_ARTIFACT_BODY;
+  const base = buildRealHandler(options);
+
+  const artifactDb = new ArtifactDB(':memory:');
+  const synthProvider = makeStubProvider('mock-synth', artifactBody);
+
+  const artifactService = new ArtifactService({
+    synthesizerConfig: SYNTH_AGENT_CONFIG,
+    artifactDb,
+    resetDb: base.db,
+    handler: base.handler,
+    bus: base.bus,
+  });
+
+  return {
+    ...base,
+    artifactService,
+    artifactDb,
+    synthProvider,
+    synthesizerConfig: SYNTH_AGENT_CONFIG,
   };
 }
