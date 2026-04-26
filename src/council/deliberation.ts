@@ -94,6 +94,19 @@ interface SessionState {
   // Keying by message.id (not a counter) keeps add/remove 1:1 even if
   // bus events fire out of order or duplicate.
   pendingClassifications: Set<string>;
+  // v0.5.2.a codex round-3 P1: IntentGate registers its 'message.received'
+  // listener BEFORE DeliberationHandler does (src/index.ts:182 vs :217).
+  // When IntentGate's keyword path classifies synchronously, listener order
+  // is: IntentGate.classify() → emit 'intent.classified' → our delete fires
+  // BEFORE our add fires → message.id is added to pending AFTER its
+  // classification already completed. Result: msg.id stuck in pending
+  // forever, /councildone PendingClassificationError every time.
+  // We track classifications that complete BEFORE the corresponding add by
+  // recording message.ids on intent.classified; the message.received listener
+  // checks this set and skips the add if classification already fired.
+  // Bounded growth: removed when consumed by the corresponding add, so the
+  // set holds at most one entry per in-flight race window.
+  recentlyClassified: Set<string>;
   // True while ArtifactService.synthesize is mid-flight for this thread.
   // runDeliberation checks this before running agents so deliberation cannot
   // append new messages to a segment that /councildone is actively reading.
@@ -263,11 +276,33 @@ export class DeliberationHandler {
     // classified. Materialize the session via getSession (not sessions.get)
     // because message.received is the first event a brand-new thread will
     // see — sessions.get would no-op and the marker would be lost.
+    //
+    // v0.5.2.a codex round-3 P1: IntentGate's listener is registered before
+    // ours (src/index.ts:182 IntentGate, :217 DeliberationHandler), so when
+    // IntentGate takes its synchronous keyword path it emits intent.classified
+    // BEFORE our add-pending listener has run. We use recentlyClassified to
+    // detect that ordering and skip the stale add.
     this.bus.on('message.received', ({ message, threadId }) => {
-      this.getSession(threadId).pendingClassifications.add(message.id);
+      const session = this.getSession(threadId);
+      if (session.recentlyClassified.has(message.id)) {
+        // Race: intent.classified already fired before this add. Consume
+        // the marker and skip the add — the classification is complete, the
+        // message must NOT linger in pendingClassifications.
+        session.recentlyClassified.delete(message.id);
+        return;
+      }
+      session.pendingClassifications.add(message.id);
     });
     this.bus.on('intent.classified', ({ message, threadId }) => {
-      this.getSession(threadId).pendingClassifications.delete(message.id);
+      const session = this.getSession(threadId);
+      if (session.pendingClassifications.has(message.id)) {
+        // Normal order: add fired first, classification consumes the marker.
+        session.pendingClassifications.delete(message.id);
+      } else {
+        // Race: classification fired before our add. Mark for the add
+        // listener to consume so it knows to skip.
+        session.recentlyClassified.add(message.id);
+      }
     });
   }
 
@@ -287,6 +322,7 @@ export class DeliberationHandler {
         resetInFlight: false,
         deliberationInFlight: false,
         pendingClassifications: new Set(),
+        recentlyClassified: new Set(),
         synthesisInFlight: false,
       });
     }
