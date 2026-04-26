@@ -12,7 +12,7 @@ name: Artifact Synthesizer
 provider: claude         # or openai / google / custom
 model: claude-sonnet-4-6
 memory_dir: data/synthesizer-memory
-personality: ""          # IGNORED by /councildone — synthesizer goes through provider.chat directly
+personality: "Artifact synthesizer placeholder."   # placeholder ONLY — IGNORED by /councildone (uses provider.chat directly, bypassing personality.ts). The loader (src/config.ts) currently rejects empty strings, so this field must be non-empty even though it has no effect on synthesis.
 role_type: artifact-synthesizer
 ```
 
