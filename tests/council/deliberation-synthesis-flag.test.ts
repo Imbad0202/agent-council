@@ -11,7 +11,7 @@ describe('DeliberationHandler synthesisInFlight flag', () => {
     const sendFn = vi.fn().mockResolvedValue(undefined);
     const handler = new DeliberationHandler(bus, workers, minConfig, sendFn);
 
-    // Materialize the session (session init via isResetInFlight as a side-effect free getter)
+    // Materialize the session (session init via isSynthesisInFlight as a side-effect-free getter)
     expect(handler.isSynthesisInFlight(1)).toBe(false);
   });
 
@@ -90,5 +90,9 @@ describe('DeliberationHandler synthesisInFlight flag', () => {
     expect(replies.some((r) => /synthesis/i.test(r))).toBe(true);
     // The dropped message must NOT have been pushed into the current segment
     expect(handler.getCurrentSegmentMessages(threadId)).toHaveLength(0);
+    // Bidirectional lock invariant: the guard must NOT clear the flag.
+    // Otherwise a future refactor adding `finally { ...false }` would silently
+    // break mutual exclusion with /councildone synthesis.
+    expect(handler.isSynthesisInFlight(threadId)).toBe(true);
   });
 });
