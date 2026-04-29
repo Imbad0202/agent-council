@@ -80,3 +80,16 @@ export class SynthesisRetryExhaustedError extends Error {
     this.name = 'SynthesisRetryExhaustedError';
   }
 }
+
+export class GoogleProviderTimeoutError extends ProviderTimeoutError {
+  constructor(timeoutMs: number) {
+    super(timeoutMs);
+    this.name = 'GoogleProviderTimeoutError';
+    this.message =
+      `Google synthesis timed out after ${timeoutMs}ms. ` +
+      `Google's API does not support cancelling server-side generation; ` +
+      `to limit cost, retries are disabled for Google. ` +
+      `Note: a single timed-out generation may still bill server-side. ` +
+      `Try /councildone again later, or switch synthesizer to Claude/OpenAI.`;
+  }
+}
