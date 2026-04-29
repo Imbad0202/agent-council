@@ -20,12 +20,17 @@ export class OpenAIProvider extends BaseProvider {
       })),
     ];
 
-    const response = await this.client.chat.completions.create({
-      model: options.model,
-      messages: openaiMessages,
-      max_completion_tokens: options.maxTokens ?? 16384,
-      temperature: options.temperature ?? 0.7,
-    });
+    const response = await this.client.chat.completions.create(
+      {
+        model: options.model,
+        messages: openaiMessages,
+        max_completion_tokens: options.maxTokens ?? 16384,
+        temperature: options.temperature ?? 0.7,
+      },
+      {
+        ...(options.signal && { signal: options.signal }),
+      },
+    );
 
     const choice = response.choices[0];
     let content = choice?.message?.content ?? '';
