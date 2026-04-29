@@ -72,7 +72,10 @@ export function isProviderEmptyResponse(content: string): boolean {
   return false;
 }
 
-export function isHardFail(err: unknown): boolean {
+export function isHardFail(err: unknown, provider?: LLMProvider): boolean {
+  if (err instanceof ProviderTimeoutError && provider?.name === 'google') {
+    return true;
+  }
   if (err instanceof ProviderTimeoutError) return false;
   if (err instanceof EmptyResponseError) return false;
   if (err instanceof Error && 'status' in err) {
