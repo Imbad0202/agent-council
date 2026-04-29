@@ -193,6 +193,34 @@ describe('invokeWithRetry retry-storm bound', () => {
     expect(attemptCount).toBe(0); // no attempts at all
   });
 
+  // Round-2 codex P2: caller abort during backoff sleep must short-circuit
+  // before next attempt starts — providers that don't synchronously reject
+  // pre-aborted signals would otherwise burn another request.
+  it('caller signal aborts during backoff sleep → no further attempts', async () => {
+    let attemptCount = 0;
+    const ctrl = new AbortController();
+    const provider: LLMProvider = {
+      name: 'claude',
+      chat: vi.fn(async () => {
+        attemptCount++;
+        // First attempt fails with non-hard-fail (triggers backoff sleep)
+        throw new Error('transient');
+      }),
+    } as unknown as LLMProvider;
+
+    // Abort during the first backoff sleep (1s default; we use 50ms timeout
+    // so backoff is 1s real time per SLEEPS_MS). Abort 50ms in.
+    setTimeout(() => ctrl.abort(new Error('cancelled during backoff')), 50);
+
+    let caught: unknown;
+    try {
+      await invokeWithRetry(provider, MESSAGES, { ...OPTS, signal: ctrl.signal }, 50);
+    } catch (e) { caught = e; }
+    expect((caught as Error).message).toContain('cancelled during backoff');
+    expect(attemptCount).toBe(1); // ONLY 1 attempt — abort caught after sleep
+    expect(caught).not.toBeInstanceOf(SynthesisRetryExhaustedError);
+  }, 5_000);
+
   it('caller signal aborts mid-retry → stops retry loop on next iteration', async () => {
     let attemptCount = 0;
     const ctrl = new AbortController();

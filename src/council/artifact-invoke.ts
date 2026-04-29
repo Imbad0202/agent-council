@@ -94,17 +94,22 @@ export async function invokeWithRetry(
   options: ChatOptions,
   perAttemptTimeoutMs: number = PER_ATTEMPT_TIMEOUT_MS,
 ): Promise<ProviderResponse> {
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    // Round-1 codex P2-1: short-circuit retry loop on caller cancellation.
-    // If options.signal already aborted (or aborted between attempts), exit
-    // immediately with the abort error rather than burning attempts + backoff.
+  // Round-1 codex P2-1 + round-2 P2: short-circuit retry loop on caller
+  // cancellation, BOTH before sleep and after sleep — abort during backoff
+  // would otherwise let another LLM request start.
+  const checkAborted = () => {
     if (options.signal?.aborted) {
       throw options.signal.reason instanceof Error
         ? options.signal.reason
         : new DOMException('aborted', 'AbortError');
     }
+  };
+
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    checkAborted();
     if (attempt > 1) await sleep(SLEEPS_MS[attempt - 2]);
+    checkAborted(); // round-2 P2: re-check after backoff before next attempt
     try {
       const response = await invokeProviderForArtifact(
         provider, messages, options, perAttemptTimeoutMs,
