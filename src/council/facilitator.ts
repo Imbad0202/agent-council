@@ -102,6 +102,7 @@ export class FacilitatorAgent {
 
   public async evaluateIntervention(
     threadId: number,
+    signal?: AbortSignal, // NEW v0.5.3 §5.1 site 2
   ): Promise<FacilitatorInterventionResult | null> {
     const history = this.deliberationHistory.get(threadId) ?? [];
 
@@ -121,7 +122,15 @@ export class FacilitatorAgent {
     };
 
     try {
-      const response = await this.worker.respond([evalMessage], 'synthesizer');
+      const response = await this.worker.respond(
+        [evalMessage],
+        'synthesizer',
+        undefined,  // challengePrompt
+        undefined,  // complexity
+        false,      // rotationMode
+        undefined,  // snapshotPrefix
+        signal,     // NEW v0.5.3 §5.1 site 2
+      );
       const decision = this.parseDecision(response.content);
       if (decision.action === 'none') return null;
       return {
