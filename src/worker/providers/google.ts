@@ -26,6 +26,7 @@ export class GoogleProvider extends BaseProvider {
         maxOutputTokens: options.maxTokens ?? 2048,
         temperature: options.temperature ?? 0.7,
         systemInstruction: options.systemPrompt,
+        ...(options.signal && { abortSignal: options.signal }),
       },
     });
 
