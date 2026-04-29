@@ -135,7 +135,7 @@ export class DeliberationHandler {
   private facilitatorIntervention:
     | {
         recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
-        evaluateIntervention: (threadId: number) => Promise<FacilitatorInterventionResult | null>;
+        evaluateIntervention: (threadId: number, signal?: AbortSignal) => Promise<FacilitatorInterventionResult | null>;
       }
     | undefined;
   private sessions: Map<number, SessionState> = new Map();
@@ -185,7 +185,7 @@ export class DeliberationHandler {
       // no-op-equivalent that still satisfies the contract.
       facilitatorIntervention?: {
         recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
-        evaluateIntervention: (threadId: number) => Promise<FacilitatorInterventionResult | null>;
+        evaluateIntervention: (threadId: number, signal?: AbortSignal) => Promise<FacilitatorInterventionResult | null>;
       };
     },
   ) {
@@ -219,7 +219,7 @@ export class DeliberationHandler {
         options.facilitatorIntervention ?? {
           recordAgentResponse: (threadId, agentId, content) =>
             agent.recordAgentResponse(threadId, agentId, content),
-          evaluateIntervention: (threadId) => agent.evaluateIntervention(threadId),
+          evaluateIntervention: (threadId, signal) => agent.evaluateIntervention(threadId, signal),
         };
     } else {
       this.facilitatorIntervention = options?.facilitatorIntervention;
