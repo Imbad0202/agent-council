@@ -1,5 +1,6 @@
 import type { ProviderMessage, ChatOptions, ProviderResponse } from '../../types.js';
 import { BaseProvider } from './base.js';
+import { mergeSignals } from '../../abort-utils.js';
 
 export class CustomProvider extends BaseProvider {
   readonly name = 'custom';
@@ -35,7 +36,7 @@ export class CustomProvider extends BaseProvider {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
+      signal: mergeSignals(options.signal, AbortSignal.timeout(60_000)),
     });
 
     if (!res.ok) {

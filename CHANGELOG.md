@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-04-29
+
+### Added
+
+- `AbortSignal` threading from per-attempt timeouts down to the four LLM SDKs (Claude, OpenAI, Google, Custom). Closes v0.5.2 spec §5 "concurrent retry storm" known limitation.
+- `ChatOptions.signal?: AbortSignal` field; conditional spread `...(signal && { signal })` matches existing optional-field style.
+- `src/abort-utils.ts` (top-level): `TimeoutReason` class, `isAbortError`, `mergeSignals` (wraps `AbortSignal.any`), `isTimeoutAbort`. Recognizes Anthropic / OpenAI `APIUserAbortError` via `constructor.name`.
+- `GoogleProviderTimeoutError extends ProviderTimeoutError` with user-facing disclosure baked into `message`.
+- `AgentWorker.respond()` accepts optional 7th positional `signal?: AbortSignal` for the facilitator-intervention path.
+
+### Changed
+
+- `invokeProviderForArtifact` replaces `Promise.race(chat, timeout)` with race + signal pattern. Race remains the deterministic backstop; signal is best-effort SDK cleanup that runs in parallel.
+- `isHardFail(err, provider?)` accepts optional `LLMProvider`; treats `ProviderTimeoutError` as hard fail when `provider.name === 'google'` (Google's `abortSignal` is client-side only, so retries are bounded to 1 attempt to limit cost).
+- `invokeWithRetry` wraps Google `ProviderTimeoutError` into `GoogleProviderTimeoutError` so adapters' `err.message` printing surfaces the user-facing disclosure without code changes.
+- `DeliberationHandler` facilitator-intervention callsite uses single-timer race+signal pattern (one `setTimeout` drives both race-reject and signal-abort; `reject()` synchronous before `abort()`; `finally { clearTimeout }`).
+
+### Behavior
+
+For **Claude / OpenAI / Custom**: under provider hang, billing now stops at ~1× per-attempt × MAX_ATTEMPTS sequential (instead of ~4× concurrent).
+
+For **Google**: first synthesis timeout fails the operation immediately (no retry) and surfaces a `GoogleProviderTimeoutError` whose message explains that Google's API does not support cancelling server-side generation. Switching the synthesizer to Claude/OpenAI restores retry-on-timeout behavior.
+
+### Notes
+
+- v0.5.4 will extend cancellation to `respondDeterministic`, `SessionReset`, IntentGate, memory layer, and dispatcher.
+- Spec: `docs/superpowers/specs/2026-04-29-v0.5.3-abortsignal-threading-design.md` (5 codex review rounds, 0 P1).
+
 ## [0.5.2] - 2026-04-26
 
 ### Added

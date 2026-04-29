@@ -59,6 +59,7 @@ export class AgentWorker {
     complexity?: Complexity,
     rotationMode = false,
     snapshotPrefix?: string,
+    signal?: AbortSignal, // NEW v0.5.3 §5.1 site 1
   ): Promise<ProviderResponse> {
     const { stable, volatile } = buildSystemPromptParts(this.config, this.memorySyncPath, role, rotationMode);
     const systemPrompt = `${stable}\n\n---\n\n${volatile}`;
@@ -106,6 +107,7 @@ export class AgentWorker {
       systemPrompt,
       ...(systemPromptParts && { systemPromptParts }),
       ...(thinking && { thinking }),
+      ...(signal && { signal }),  // NEW v0.5.3 §5.1 site 1
     });
 
     this.stats.responseCount++;

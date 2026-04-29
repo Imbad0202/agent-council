@@ -195,6 +195,65 @@ describe('FacilitatorAgent', () => {
     });
   });
 
+  describe('evaluateIntervention signal (v0.5.3 §5.1 site 2)', () => {
+    it('forwards signal to worker.respond as 7th positional arg', async () => {
+      const capturedArgs: unknown[][] = [];
+      const mockWorker = {
+        id: 'facilitator-w',
+        respond: vi.fn(async (...args: unknown[]) => {
+          capturedArgs.push(args);
+          return { content: '{}', model: 'm', tokensUsed: { input: 1, output: 1 } };
+        }),
+      } as unknown as AgentWorker;
+
+      const localBus = new EventBus();
+      const fac = new FacilitatorAgent(localBus, mockWorker);
+
+      localBus.emit('deliberation.started', {
+        threadId: 100,
+        participants: ['a', 'b'],
+        roles: {},
+        structure: 'free',
+      });
+
+      fac.recordAgentResponse(100, 'a', 'first turn');
+      fac.recordAgentResponse(100, 'b', 'second turn');
+
+      const ctrl = new AbortController();
+      await fac.evaluateIntervention(100, ctrl.signal);
+
+      expect(capturedArgs).toHaveLength(1);
+      expect(capturedArgs[0][6]).toBe(ctrl.signal); // 7th positional (index 6)
+    });
+
+    it('back-compat: evaluateIntervention(threadId) without signal still works', async () => {
+      const mockWorker = {
+        id: 'facilitator-w',
+        respond: vi.fn(async () => ({
+          content: '{}',
+          model: 'm',
+          tokensUsed: { input: 1, output: 1 },
+        })),
+      } as unknown as AgentWorker;
+
+      const localBus = new EventBus();
+      const fac = new FacilitatorAgent(localBus, mockWorker);
+
+      localBus.emit('deliberation.started', {
+        threadId: 101,
+        participants: ['a', 'b'],
+        roles: {},
+        structure: 'free',
+      });
+
+      fac.recordAgentResponse(101, 'a', 'first turn');
+      fac.recordAgentResponse(101, 'b', 'second turn');
+
+      await fac.evaluateIntervention(101);
+      expect(mockWorker.respond as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('deliberation.ended → cleanup', () => {
     it('cleans up history on deliberation.ended', async () => {
       worker = makeWorker('{"action": "none", "content": "", "target_agent": null}');

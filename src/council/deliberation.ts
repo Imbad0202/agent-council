@@ -34,6 +34,7 @@ import type { HumanCritiqueStore, CritiqueOutcome } from './human-critique-store
 import { makeHumanCritique, type HumanCritiqueStance } from './human-critique.js';
 import { buildCritiquePrompt } from './human-critique-prompts.js';
 import { scoreSession, type DepthScoreResult } from './collaboration-depth.js';
+import { TimeoutReason } from '../abort-utils.js';
 
 const DEFAULT_CRITIQUE_TIMEOUT_MS = 30_000;
 
@@ -46,15 +47,6 @@ const DEFAULT_CRITIQUE_TIMEOUT_MS = 30_000;
 // provider config).
 const DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS = 30_000;
 
-function raceWithTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<T>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(msg)), ms);
-  });
-  return Promise.race([p, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
 const HUMAN_SENTINEL = '__human__';
 
 interface CritiqueRecordInternal {
@@ -135,7 +127,7 @@ export class DeliberationHandler {
   private facilitatorIntervention:
     | {
         recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
-        evaluateIntervention: (threadId: number) => Promise<FacilitatorInterventionResult | null>;
+        evaluateIntervention: (threadId: number, signal?: AbortSignal) => Promise<FacilitatorInterventionResult | null>;
       }
     | undefined;
   private sessions: Map<number, SessionState> = new Map();
@@ -185,7 +177,7 @@ export class DeliberationHandler {
       // no-op-equivalent that still satisfies the contract.
       facilitatorIntervention?: {
         recordAgentResponse: (threadId: number, agentId: string, content: string) => void;
-        evaluateIntervention: (threadId: number) => Promise<FacilitatorInterventionResult | null>;
+        evaluateIntervention: (threadId: number, signal?: AbortSignal) => Promise<FacilitatorInterventionResult | null>;
       };
     },
   ) {
@@ -219,7 +211,7 @@ export class DeliberationHandler {
         options.facilitatorIntervention ?? {
           recordAgentResponse: (threadId, agentId, content) =>
             agent.recordAgentResponse(threadId, agentId, content),
-          evaluateIntervention: (threadId) => agent.evaluateIntervention(threadId),
+          evaluateIntervention: (threadId, signal) => agent.evaluateIntervention(threadId, signal),
         };
     } else {
       this.facilitatorIntervention = options?.facilitatorIntervention;
@@ -876,7 +868,7 @@ export class DeliberationHandler {
           // Wrap both hook calls so a custom implementation that throws
           // synchronously (e.g. a non-async evaluateIntervention or a
           // recordAgentResponse that throws) cannot wedge the round
-          // before the .catch on raceWithTimeout has a chance to fire.
+          // before the surrounding try/catch can swallow it.
           // (codex round-4 [P3])
           try {
             this.facilitatorIntervention.recordAgentResponse(
@@ -897,19 +889,50 @@ export class DeliberationHandler {
           // best-effort, the round must finish. Promise.resolve().then()
           // normalises sync throws from a non-async hook implementation
           // into rejected promises so .catch() handles both paths.
-          const intervention = await raceWithTimeout(
-            Promise.resolve().then(() =>
-              this.facilitatorIntervention!.evaluateIntervention(threadId),
-            ),
-            DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS,
-            `facilitator intervention timed out after ${DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS}ms`,
-          ).catch((err) => {
+          //
+          // v0.5.3 §5.1 site 5: single-timer race+signal pattern. One
+          // setTimeout drives BOTH race-reject (deterministic exit) and
+          // signal-abort (best-effort SDK cleanup so the underlying
+          // provider call can release sockets / cancel the HTTP stream).
+          // reject() runs synchronously BEFORE interventionCtrl.abort()
+          // so the timeout is the authoritative race winner; the
+          // timedOut flag is belt-and-suspenders against a hook that
+          // resolves at exactly the same tick. finally{clearTimeout}
+          // prevents a zombie timer leak on the success path.
+          const interventionCtrl = new AbortController();
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          let timedOut = false;
+          let intervention: FacilitatorInterventionResult | null = null;
+          try {
+            intervention = await Promise.race([
+              Promise.resolve().then(() =>
+                this.facilitatorIntervention!.evaluateIntervention(
+                  threadId,
+                  interventionCtrl.signal,
+                ),
+              ),
+              new Promise<null>((_, reject) => {
+                timeoutId = setTimeout(() => {
+                  timedOut = true;
+                  // Reject FIRST so timeout is the deterministic winner
+                  reject(new TimeoutReason(DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS));
+                  // Then abort the signal (best-effort SDK cleanup)
+                  interventionCtrl.abort(
+                    new TimeoutReason(DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS),
+                  );
+                }, DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS);
+              }),
+            ]);
+            if (timedOut) intervention = null;
+          } catch (err) {
             console.error(
               `[deliberation] mid-round facilitator intervention failed for thread ${threadId}, agent ${worker.id}:`,
               err instanceof Error ? err.message : err,
             );
-            return null;
-          });
+            intervention = null;
+          } finally {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+          }
 
           if (intervention) {
             // Push to currentMessages first so the next agent in the loop

@@ -32,16 +32,21 @@ export class ClaudeProvider extends BaseProvider {
         content: m.content,
       }));
 
-    const response = await this.client.messages.create({
-      model: options.model,
-      max_tokens: options.maxTokens ?? 8192,
-      temperature: options.thinking ? 1 : (options.temperature ?? 0.7),
-      system: options.systemPromptParts
-        ? toAnthropicSystem(options.systemPromptParts)
-        : options.systemPrompt,
-      messages: anthropicMessages,
-      ...(options.thinking && { thinking: options.thinking }),
-    });
+    const response = await this.client.messages.create(
+      {
+        model: options.model,
+        max_tokens: options.maxTokens ?? 8192,
+        temperature: options.thinking ? 1 : (options.temperature ?? 0.7),
+        system: options.systemPromptParts
+          ? toAnthropicSystem(options.systemPromptParts)
+          : options.systemPrompt,
+        messages: anthropicMessages,
+        ...(options.thinking && { thinking: options.thinking }),
+      },
+      {
+        ...(options.signal && { signal: options.signal }),
+      },
+    );
 
     const textBlock = response.content.find((block) => block.type === 'text');
     const thinkingBlock = response.content.find((block) => block.type === 'thinking');

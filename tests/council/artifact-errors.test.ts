@@ -11,6 +11,7 @@ import {
   EmptyResponseError,
   ProviderTimeoutError,
   SynthesisRetryExhaustedError,
+  GoogleProviderTimeoutError,
 } from '../../src/council/artifact-errors.js';
 
 describe('artifact errors', () => {
@@ -55,5 +56,30 @@ describe('artifact errors', () => {
     expect(new ArtifactDeliberationInFlightError(9).threadId).toBe(9);
     expect(new PendingClassificationError(10).threadId).toBe(10);
     expect(new ArtifactBlindReviewActiveError(11).threadId).toBe(11);
+  });
+});
+
+describe('GoogleProviderTimeoutError', () => {
+  it('extends ProviderTimeoutError', () => {
+    const e = new GoogleProviderTimeoutError(30_000);
+    expect(e).toBeInstanceOf(ProviderTimeoutError);
+    expect(e).toBeInstanceOf(Error);
+  });
+
+  it('has name "GoogleProviderTimeoutError"', () => {
+    const e = new GoogleProviderTimeoutError(30_000);
+    expect(e.name).toBe('GoogleProviderTimeoutError');
+  });
+
+  it('carries timeoutMs from parent', () => {
+    const e = new GoogleProviderTimeoutError(45_000);
+    expect(e.timeoutMs).toBe(45_000);
+  });
+
+  it('message includes Google-specific disclosure', () => {
+    const e = new GoogleProviderTimeoutError(30_000);
+    expect(e.message).toContain('Google');
+    expect(e.message).toContain('server-side');
+    expect(e.message).toContain('30000');
   });
 });

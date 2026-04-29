@@ -163,6 +163,21 @@ describe('isHardFail', () => {
     const err = Object.assign(new Error('weird'), { status: undefined });
     expect(isHardFail(err)).toBe(false);
   });
+
+  const fakeGoogle = { name: 'google' } as unknown as LLMProvider;
+  const fakeClaude = { name: 'claude' } as unknown as LLMProvider;
+
+  it('ProviderTimeoutError + Google provider → true (hard fail)', () => {
+    expect(isHardFail(new ProviderTimeoutError(30_000), fakeGoogle)).toBe(true);
+  });
+
+  it('ProviderTimeoutError + Claude provider → false (retry)', () => {
+    expect(isHardFail(new ProviderTimeoutError(30_000), fakeClaude)).toBe(false);
+  });
+
+  it('ProviderTimeoutError + no provider arg → false (back-compat)', () => {
+    expect(isHardFail(new ProviderTimeoutError(30_000))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

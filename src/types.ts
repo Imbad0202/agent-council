@@ -150,6 +150,8 @@ export interface ChatOptions {
   systemPrompt: string;
   systemPromptParts?: SystemPromptPart[];
   thinking?: ThinkingConfig;
+  /** v0.5.3: optional abort signal forwarded to the underlying SDK. */
+  signal?: AbortSignal;
 }
 
 export interface ProviderResponse {

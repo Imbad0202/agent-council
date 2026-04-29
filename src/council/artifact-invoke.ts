@@ -1,7 +1,9 @@
 import type { LLMProvider, ProviderMessage, ProviderResponse, ChatOptions } from '../types.js';
 import {
   ProviderTimeoutError, EmptyResponseError, SynthesisRetryExhaustedError,
+  GoogleProviderTimeoutError,
 } from './artifact-errors.js';
+import { TimeoutReason, isAbortError, mergeSignals } from '../abort-utils.js';
 
 const PER_ATTEMPT_TIMEOUT_MS = 30_000;
 const MAX_ATTEMPTS = 4;
@@ -12,12 +14,16 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Caller-side timeout via Promise.race. Underlying fetch is NOT cancelled.
+ * v0.5.3: race + native abort. The setTimeout drives both the deterministic
+ * race exit (reject ProviderTimeoutError) and a best-effort SDK abort
+ * (timeoutCtrl.abort) so cooperating providers stop their HTTP request.
  *
- * KNOWN LIMITATION (spec §5): under retry storm with hung provider, up to
- * MAX_ATTEMPTS concurrent in-flight LLM calls can accumulate. Caller-visible
- * bound is ~127s but token cost can be ~4× per attempt budget. v0.5.3+
- * AbortSignal threading is the real fix.
+ * Cause classification (v0.5.3 §3.3):
+ * - race wins → ProviderTimeoutError (synchronous reject before abort)
+ * - SDK rethrows TimeoutReason → ProviderTimeoutError
+ * - SDK rethrows AbortError but merged.reason is TimeoutReason → ProviderTimeoutError
+ * - SDK rethrows AbortError with caller's reason → re-throw (caller cancellation)
+ * - non-abort error → re-throw
  */
 export async function invokeProviderForArtifact(
   provider: LLMProvider,
@@ -25,19 +31,36 @@ export async function invokeProviderForArtifact(
   options: ChatOptions,
   perAttemptTimeoutMs: number = PER_ATTEMPT_TIMEOUT_MS,
 ): Promise<ProviderResponse> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutCtrl = new AbortController();
+  const merged = mergeSignals(options.signal, timeoutCtrl.signal);
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      provider.chat(messages, options),
+      provider.chat(messages, { ...options, signal: merged }),
       new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(
-          () => reject(new ProviderTimeoutError(perAttemptTimeoutMs)),
-          perAttemptTimeoutMs,
-        );
+        timeoutId = setTimeout(() => {
+          timeoutCtrl.abort(new TimeoutReason(perAttemptTimeoutMs));
+          reject(new ProviderTimeoutError(perAttemptTimeoutMs));
+        }, perAttemptTimeoutMs);
       }),
     ]);
+  } catch (err) {
+    if (err instanceof TimeoutReason) {
+      throw new ProviderTimeoutError(perAttemptTimeoutMs);
+    }
+    if (err instanceof ProviderTimeoutError) {
+      throw err;
+    }
+    if (isAbortError(err)) {
+      if (merged?.aborted && merged.reason instanceof TimeoutReason) {
+        throw new ProviderTimeoutError(perAttemptTimeoutMs);
+      }
+      throw err;
+    }
+    throw err;
   } finally {
-    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
 }
 
@@ -50,7 +73,10 @@ export function isProviderEmptyResponse(content: string): boolean {
   return false;
 }
 
-export function isHardFail(err: unknown): boolean {
+export function isHardFail(err: unknown, provider?: LLMProvider): boolean {
+  if (err instanceof ProviderTimeoutError && provider?.name === 'google') {
+    return true;
+  }
   if (err instanceof ProviderTimeoutError) return false;
   if (err instanceof EmptyResponseError) return false;
   if (err instanceof Error && 'status' in err) {
@@ -66,13 +92,27 @@ export async function invokeWithRetry(
   provider: LLMProvider,
   messages: ProviderMessage[],
   options: ChatOptions,
+  perAttemptTimeoutMs: number = PER_ATTEMPT_TIMEOUT_MS,
 ): Promise<ProviderResponse> {
+  // Round-1 codex P2-1 + round-2 P2: short-circuit retry loop on caller
+  // cancellation, BOTH before sleep and after sleep — abort during backoff
+  // would otherwise let another LLM request start.
+  const checkAborted = () => {
+    if (options.signal?.aborted) {
+      throw options.signal.reason instanceof Error
+        ? options.signal.reason
+        : new DOMException('aborted', 'AbortError');
+    }
+  };
+
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    checkAborted();
     if (attempt > 1) await sleep(SLEEPS_MS[attempt - 2]);
+    checkAborted(); // round-2 P2: re-check after backoff before next attempt
     try {
       const response = await invokeProviderForArtifact(
-        provider, messages, options, PER_ATTEMPT_TIMEOUT_MS,
+        provider, messages, options, perAttemptTimeoutMs,
       );
       if (isProviderEmptyResponse(response.content)) {
         lastErr = new EmptyResponseError();
@@ -81,7 +121,23 @@ export async function invokeWithRetry(
       return response;
     } catch (err) {
       lastErr = err;
-      if (isHardFail(err)) throw err;
+      // Round-1 P2-1 + round-2 P2 + round-3 P2: caller cancellation is terminal,
+      // regardless of the error shape the SDK/fetch threw. If options.signal is
+      // aborted at this point, the caller wants out — surface the cancellation
+      // reason directly. This catches BOTH AbortError-shaped exceptions AND
+      // raw Error rejections that fetch surfaces when signal.reason is an Error
+      // (CustomProvider path) AND any other shape we haven't anticipated.
+      if (options.signal?.aborted) {
+        throw options.signal.reason instanceof Error
+          ? options.signal.reason
+          : err;
+      }
+      if (isHardFail(err, provider)) {
+        if (err instanceof ProviderTimeoutError && provider.name === 'google') {
+          throw new GoogleProviderTimeoutError(err.timeoutMs);
+        }
+        throw err;
+      }
     }
   }
   throw new SynthesisRetryExhaustedError(lastErr);
