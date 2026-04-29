@@ -47,15 +47,6 @@ const DEFAULT_CRITIQUE_TIMEOUT_MS = 30_000;
 // provider config).
 const DEFAULT_FACILITATOR_INTERVENTION_TIMEOUT_MS = 30_000;
 
-function raceWithTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<T>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(msg)), ms);
-  });
-  return Promise.race([p, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
 const HUMAN_SENTINEL = '__human__';
 
 interface CritiqueRecordInternal {
