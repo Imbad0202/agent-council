@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-04-29
+
 ### Added
 
 - `AbortSignal` threading from per-attempt timeouts down to the four LLM SDKs (Claude, OpenAI, Google, Custom). Closes v0.5.2 spec §5 "concurrent retry storm" known limitation.
