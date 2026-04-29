@@ -193,6 +193,36 @@ describe('invokeWithRetry retry-storm bound', () => {
     expect(attemptCount).toBe(0); // no attempts at all
   });
 
+  // Round-3 codex P2: when caller abort fires on the FINAL attempt, and the
+  // SDK/fetch surfaces the error as a non-AbortError shape (e.g. fetch with
+  // signal.reason = Error), the catch must still terminate with the caller's
+  // reason rather than wrapping in SynthesisRetryExhaustedError.
+  it('caller signal aborts on final attempt with non-AbortError shape → caller reason surfaces', async () => {
+    let attemptCount = 0;
+    const ctrl = new AbortController();
+    const callerReason = new Error('user cancelled on last attempt');
+    const provider: LLMProvider = {
+      name: 'custom',
+      chat: vi.fn(async () => {
+        attemptCount++;
+        if (attemptCount < 4) {
+          throw new Error('transient'); // not hard-fail, retry
+        }
+        // On 4th (last) attempt: caller aborts, fetch throws raw Error (not AbortError)
+        ctrl.abort(callerReason);
+        throw callerReason; // simulates fetch's behavior with non-AbortError reason
+      }),
+    } as unknown as LLMProvider;
+
+    let caught: unknown;
+    try {
+      await invokeWithRetry(provider, MESSAGES, { ...OPTS, signal: ctrl.signal }, 1);
+    } catch (e) { caught = e; }
+    expect(caught).toBe(callerReason); // caller's reason surfaces directly
+    expect(caught).not.toBeInstanceOf(SynthesisRetryExhaustedError);
+    expect(attemptCount).toBe(4);
+  }, 15_000);
+
   // Round-2 codex P2: caller abort during backoff sleep must short-circuit
   // before next attempt starts — providers that don't synchronously reject
   // pre-aborted signals would otherwise burn another request.

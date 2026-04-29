@@ -121,10 +121,16 @@ export async function invokeWithRetry(
       return response;
     } catch (err) {
       lastErr = err;
-      // Round-1 codex P2-1: caller cancellation is terminal — surface the
-      // abort error directly rather than retrying.
-      if (isAbortError(err) && options.signal?.aborted) {
-        throw err;
+      // Round-1 P2-1 + round-2 P2 + round-3 P2: caller cancellation is terminal,
+      // regardless of the error shape the SDK/fetch threw. If options.signal is
+      // aborted at this point, the caller wants out — surface the cancellation
+      // reason directly. This catches BOTH AbortError-shaped exceptions AND
+      // raw Error rejections that fetch surfaces when signal.reason is an Error
+      // (CustomProvider path) AND any other shape we haven't anticipated.
+      if (options.signal?.aborted) {
+        throw options.signal.reason instanceof Error
+          ? options.signal.reason
+          : err;
       }
       if (isHardFail(err, provider)) {
         if (err instanceof ProviderTimeoutError && provider.name === 'google') {
