@@ -2,6 +2,7 @@ import type { LLMProvider, ProviderMessage, ProviderResponse, ChatOptions } from
 import {
   ProviderTimeoutError, EmptyResponseError, SynthesisRetryExhaustedError,
 } from './artifact-errors.js';
+import { TimeoutReason, isAbortError, mergeSignals } from '../abort-utils.js';
 
 const PER_ATTEMPT_TIMEOUT_MS = 30_000;
 const MAX_ATTEMPTS = 4;
@@ -12,12 +13,16 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Caller-side timeout via Promise.race. Underlying fetch is NOT cancelled.
+ * v0.5.3: race + native abort. The setTimeout drives both the deterministic
+ * race exit (reject ProviderTimeoutError) and a best-effort SDK abort
+ * (timeoutCtrl.abort) so cooperating providers stop their HTTP request.
  *
- * KNOWN LIMITATION (spec §5): under retry storm with hung provider, up to
- * MAX_ATTEMPTS concurrent in-flight LLM calls can accumulate. Caller-visible
- * bound is ~127s but token cost can be ~4× per attempt budget. v0.5.3+
- * AbortSignal threading is the real fix.
+ * Cause classification (v0.5.3 §3.3):
+ * - race wins → ProviderTimeoutError (synchronous reject before abort)
+ * - SDK rethrows TimeoutReason → ProviderTimeoutError
+ * - SDK rethrows AbortError but merged.reason is TimeoutReason → ProviderTimeoutError
+ * - SDK rethrows AbortError with caller's reason → re-throw (caller cancellation)
+ * - non-abort error → re-throw
  */
 export async function invokeProviderForArtifact(
   provider: LLMProvider,
@@ -25,19 +30,36 @@ export async function invokeProviderForArtifact(
   options: ChatOptions,
   perAttemptTimeoutMs: number = PER_ATTEMPT_TIMEOUT_MS,
 ): Promise<ProviderResponse> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutCtrl = new AbortController();
+  const merged = mergeSignals(options.signal, timeoutCtrl.signal);
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      provider.chat(messages, options),
+      provider.chat(messages, { ...options, signal: merged }),
       new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(
-          () => reject(new ProviderTimeoutError(perAttemptTimeoutMs)),
-          perAttemptTimeoutMs,
-        );
+        timeoutId = setTimeout(() => {
+          timeoutCtrl.abort(new TimeoutReason(perAttemptTimeoutMs));
+          reject(new ProviderTimeoutError(perAttemptTimeoutMs));
+        }, perAttemptTimeoutMs);
       }),
     ]);
+  } catch (err) {
+    if (err instanceof TimeoutReason) {
+      throw new ProviderTimeoutError(perAttemptTimeoutMs);
+    }
+    if (err instanceof ProviderTimeoutError) {
+      throw err;
+    }
+    if (isAbortError(err)) {
+      if (merged?.aborted && merged.reason instanceof TimeoutReason) {
+        throw new ProviderTimeoutError(perAttemptTimeoutMs);
+      }
+      throw err;
+    }
+    throw err;
   } finally {
-    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
 }
 
