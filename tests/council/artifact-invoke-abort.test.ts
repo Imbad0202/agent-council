@@ -131,14 +131,17 @@ describe('invokeWithRetry retry-storm bound', () => {
       }),
     } as unknown as LLMProvider;
 
+    // Round-1 codex P2-2: inject 50ms per-attempt timeout instead of waiting
+    // production 30s × 4 = 120s. Same retry-storm invariant proven.
+    // Real time: 4 × 50ms + (1+2+4)s sleeps = ~7.2s. Override vitest's 5s default.
     let caught: unknown;
     try {
-      await invokeWithRetry(provider, MESSAGES, { ...OPTS });
+      await invokeWithRetry(provider, MESSAGES, { ...OPTS }, 50);
     } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(SynthesisRetryExhaustedError);
     expect(maxInFlight).toBe(1);
     expect(settledOrder).toEqual([1, 2, 3, 4]);
-  }, 180_000);
+  }, 15_000);
 
   it('Test E-Google: 1 timeout → GoogleProviderTimeoutError, no further attempts', async () => {
     let attemptCount = 0;
@@ -154,14 +157,68 @@ describe('invokeWithRetry retry-storm bound', () => {
       }),
     } as unknown as LLMProvider;
 
+    // Round-1 codex P2-2: inject 50ms per-attempt timeout instead of 30s.
     let caught: unknown;
     try {
-      await invokeWithRetry(provider, MESSAGES, { ...OPTS });
+      await invokeWithRetry(provider, MESSAGES, { ...OPTS }, 50);
     } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(GoogleProviderTimeoutError);
     expect(caught).toBeInstanceOf(ProviderTimeoutError);
     expect((caught as Error).message).toContain('Google');
     expect((caught as Error).message).toContain('server-side');
     expect(attemptCount).toBe(1);
-  }, 60_000);
+  });
+
+  // Round-1 codex P2-1: caller cancellation must short-circuit the retry loop.
+  it('pre-aborted caller signal → 0 attempts, surfaces caller error directly', async () => {
+    let attemptCount = 0;
+    const provider: LLMProvider = {
+      name: 'claude',
+      chat: vi.fn(async () => {
+        attemptCount++;
+        return { content: 'unreachable', model: 'm', tokensUsed: { input: 0, output: 0 } };
+      }),
+    } as unknown as LLMProvider;
+
+    const ctrl = new AbortController();
+    const reason = new Error('user cancelled');
+    ctrl.abort(reason);
+
+    let caught: unknown;
+    try {
+      await invokeWithRetry(provider, MESSAGES, { ...OPTS, signal: ctrl.signal }, 50);
+    } catch (e) { caught = e; }
+    expect(caught).toBe(reason); // surfaces caller's reason directly, not wrapped
+    expect(caught).not.toBeInstanceOf(SynthesisRetryExhaustedError);
+    expect(attemptCount).toBe(0); // no attempts at all
+  });
+
+  it('caller signal aborts mid-retry → stops retry loop on next iteration', async () => {
+    let attemptCount = 0;
+    const ctrl = new AbortController();
+    const provider: LLMProvider = {
+      name: 'claude',
+      chat: vi.fn(async (_msgs, options: { signal?: AbortSignal }) => {
+        attemptCount++;
+        // Each attempt fails fast (non-hard-fail) so loop continues
+        if (attemptCount === 1) {
+          throw new Error('transient'); // not hard-fail, will retry
+        }
+        // After first attempt, caller aborts — loop should exit before attempt 3
+        ctrl.abort(new Error('user cancelled mid-retry'));
+        return new Promise((_, reject) => {
+          options.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')));
+        });
+      }),
+    } as unknown as LLMProvider;
+
+    let caught: unknown;
+    try {
+      await invokeWithRetry(provider, MESSAGES, { ...OPTS, signal: ctrl.signal }, 50);
+    } catch (e) { caught = e; }
+    expect(caught).not.toBeInstanceOf(SynthesisRetryExhaustedError);
+    expect(isAbortError(caught) || (caught as Error).message?.includes('cancelled')).toBe(true);
+    expect(attemptCount).toBeLessThanOrEqual(2); // 1st transient, 2nd aborted, no 3rd
+  });
 });

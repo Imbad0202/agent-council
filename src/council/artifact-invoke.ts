@@ -92,13 +92,22 @@ export async function invokeWithRetry(
   provider: LLMProvider,
   messages: ProviderMessage[],
   options: ChatOptions,
+  perAttemptTimeoutMs: number = PER_ATTEMPT_TIMEOUT_MS,
 ): Promise<ProviderResponse> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Round-1 codex P2-1: short-circuit retry loop on caller cancellation.
+    // If options.signal already aborted (or aborted between attempts), exit
+    // immediately with the abort error rather than burning attempts + backoff.
+    if (options.signal?.aborted) {
+      throw options.signal.reason instanceof Error
+        ? options.signal.reason
+        : new DOMException('aborted', 'AbortError');
+    }
     if (attempt > 1) await sleep(SLEEPS_MS[attempt - 2]);
     try {
       const response = await invokeProviderForArtifact(
-        provider, messages, options, PER_ATTEMPT_TIMEOUT_MS,
+        provider, messages, options, perAttemptTimeoutMs,
       );
       if (isProviderEmptyResponse(response.content)) {
         lastErr = new EmptyResponseError();
@@ -107,6 +116,11 @@ export async function invokeWithRetry(
       return response;
     } catch (err) {
       lastErr = err;
+      // Round-1 codex P2-1: caller cancellation is terminal — surface the
+      // abort error directly rather than retrying.
+      if (isAbortError(err) && options.signal?.aborted) {
+        throw err;
+      }
       if (isHardFail(err, provider)) {
         if (err instanceof ProviderTimeoutError && provider.name === 'google') {
           throw new GoogleProviderTimeoutError(err.timeoutMs);
