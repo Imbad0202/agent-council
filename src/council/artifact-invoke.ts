@@ -1,6 +1,7 @@
 import type { LLMProvider, ProviderMessage, ProviderResponse, ChatOptions } from '../types.js';
 import {
   ProviderTimeoutError, EmptyResponseError, SynthesisRetryExhaustedError,
+  GoogleProviderTimeoutError,
 } from './artifact-errors.js';
 import { TimeoutReason, isAbortError, mergeSignals } from '../abort-utils.js';
 
@@ -106,7 +107,12 @@ export async function invokeWithRetry(
       return response;
     } catch (err) {
       lastErr = err;
-      if (isHardFail(err)) throw err;
+      if (isHardFail(err, provider)) {
+        if (err instanceof ProviderTimeoutError && provider.name === 'google') {
+          throw new GoogleProviderTimeoutError(err.timeoutMs);
+        }
+        throw err;
+      }
     }
   }
   throw new SynthesisRetryExhaustedError(lastErr);

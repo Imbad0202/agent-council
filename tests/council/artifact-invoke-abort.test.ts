@@ -103,3 +103,65 @@ describe('invokeProviderForArtifact (v0.5.3 race + signal)', () => {
     expect(caught).toBe(err);
   });
 });
+
+describe('invokeWithRetry retry-storm bound', () => {
+  it('Test E (Claude): 4 timeouts → ≤1 in-flight, sequential settle', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const settledOrder: number[] = [];
+    let attemptId = 0;
+
+    const provider: LLMProvider = {
+      name: 'claude',
+      chat: vi.fn(async (_msgs, options: { signal?: AbortSignal }) => {
+        const id = ++attemptId;
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        try {
+          await new Promise((_, reject) => {
+            options.signal?.addEventListener('abort', () => {
+              reject(new DOMException('aborted', 'AbortError'));
+            });
+          });
+        } finally {
+          inFlight--;
+          settledOrder.push(id);
+        }
+        throw new Error('unreachable');
+      }),
+    } as unknown as LLMProvider;
+
+    let caught: unknown;
+    try {
+      await invokeWithRetry(provider, MESSAGES, { ...OPTS });
+    } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(SynthesisRetryExhaustedError);
+    expect(maxInFlight).toBe(1);
+    expect(settledOrder).toEqual([1, 2, 3, 4]);
+  }, 180_000);
+
+  it('Test E-Google: 1 timeout → GoogleProviderTimeoutError, no further attempts', async () => {
+    let attemptCount = 0;
+    const provider: LLMProvider = {
+      name: 'google',
+      chat: vi.fn(async (_msgs, options: { signal?: AbortSignal }) => {
+        attemptCount++;
+        await new Promise((_, reject) => {
+          options.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')));
+        });
+        throw new Error('unreachable');
+      }),
+    } as unknown as LLMProvider;
+
+    let caught: unknown;
+    try {
+      await invokeWithRetry(provider, MESSAGES, { ...OPTS });
+    } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(GoogleProviderTimeoutError);
+    expect(caught).toBeInstanceOf(ProviderTimeoutError);
+    expect((caught as Error).message).toContain('Google');
+    expect((caught as Error).message).toContain('server-side');
+    expect(attemptCount).toBe(1);
+  }, 60_000);
+});
