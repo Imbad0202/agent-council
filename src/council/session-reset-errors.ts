@@ -68,3 +68,12 @@ export class SynthesisInProgressError extends Error {
     this.name = 'SynthesisInProgressError';
   }
 }
+
+export type ResetCancelReason = 'user' | 'timeout';
+
+export class ResetCancelledError extends Error {
+  constructor(public readonly reason: ResetCancelReason) {
+    super(`Reset cancelled (reason: ${reason})`);
+    this.name = 'ResetCancelledError';
+  }
+}

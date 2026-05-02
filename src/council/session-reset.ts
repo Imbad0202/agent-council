@@ -13,11 +13,48 @@ import {
   DeliberationInProgressError,
   EmptySegmentError,
   MalformedResetSummaryError,
+  ResetCancelledError,
   ResetInProgressError,
   SynthesisInProgressError,
 } from './session-reset-errors.js';
 import { computeNextSegmentIndex } from './segment-counter.js';
 import { effectiveResetSnapshots } from './effective-reset-snapshots.js';
+import { TimeoutReason } from '../abort-utils.js';
+
+const RESET_OPERATION_TIMEOUT_MS = 30_000;
+
+// Module-private. NOT exported from abort-utils.ts because it carries
+// ResetCancelledError knowledge, which would invert the dependency
+// (utility importing caller-specific error type).
+function classifyAbort(reason: unknown): Error {
+  if (reason instanceof TimeoutReason) return new ResetCancelledError('timeout');
+  if (reason instanceof ResetCancelledError) return reason; // user-fired with explicit reason
+  return new ResetCancelledError('user');
+}
+
+// Exported helper so unit tests in tests/council/await-reset-race.test.ts
+// import THIS function instead of duplicating the catch logic in test code.
+// Removing the export breaks tests at import time, locking the seam in place.
+export async function awaitResetRace<T>(
+  summaryPromise: Promise<T>,
+  racePromise: Promise<never>,
+  signal: AbortSignal,
+): Promise<T> {
+  try {
+    return await Promise.race([summaryPromise, racePromise]);
+  } catch (err) {
+    // Round-2 P1-r2-1 broadening: any throw exiting Promise.race while the
+    // operation is aborted gets reclassified to ResetCancelledError —
+    // regardless of err shape. This handles both raw SDK abort errors
+    // (APIUserAbortError, AbortError) and non-abort errors that happen to
+    // race with cancel (e.g. provider 429). Non-aborted-state throws
+    // propagate unchanged.
+    if (signal.aborted) {
+      throw classifyAbort(signal.reason);
+    }
+    throw err;
+  }
+}
 
 export interface HandlerForReset {
   getCurrentSegmentMessages(threadId: number): readonly CouncilMessage[];
