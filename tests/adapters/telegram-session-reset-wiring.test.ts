@@ -7,6 +7,7 @@ import { SessionReset } from '../../src/council/session-reset.js';
 const mockBot = {
   on: vi.fn(),
   command: vi.fn(),
+  catch: vi.fn(),
   start: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn().mockResolvedValue(undefined),
   api: {
@@ -18,9 +19,15 @@ const mockBot = {
   },
 };
 
+const mockRunner = { stop: vi.fn().mockResolvedValue(undefined) };
+
 vi.mock('grammy', () => ({
   Bot: vi.fn(() => mockBot),
   InlineKeyboard: vi.fn(),
+}));
+
+vi.mock('@grammyjs/runner', () => ({
+  run: vi.fn(() => mockRunner),
 }));
 
 const { TelegramAdapter } = await import('../../src/adapters/telegram.js');

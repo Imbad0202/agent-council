@@ -10,6 +10,7 @@ import type { InputAdapter, OutputAdapter } from '../../src/adapters/types.js';
 const mockBot = {
   on: vi.fn(),
   command: vi.fn(),
+  catch: vi.fn(),
   start: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn().mockResolvedValue(undefined),
   api: {
@@ -21,8 +22,16 @@ const mockBot = {
   },
 };
 
+const mockRunner = {
+  stop: vi.fn().mockResolvedValue(undefined),
+};
+
 vi.mock('grammy', () => ({
   Bot: vi.fn(() => mockBot),
+}));
+
+vi.mock('@grammyjs/runner', () => ({
+  run: vi.fn(() => mockRunner),
 }));
 
 // Import AFTER the mock is registered
@@ -77,6 +86,7 @@ describe('TelegramAdapter', () => {
     mockBot.api.sendMessage.mockResolvedValue({ message_id: 1 });
     mockBot.api.deleteWebhook.mockResolvedValue(true);
     mockBot.api.raw.getUpdates.mockResolvedValue([]);
+    mockRunner.stop.mockResolvedValue(undefined);
   });
 
   // -------------------------------------------------------------------------

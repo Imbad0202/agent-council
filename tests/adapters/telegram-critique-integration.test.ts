@@ -5,6 +5,7 @@ const mockBot = {
   on: vi.fn(),
   command: vi.fn(),
   callbackQuery: vi.fn(),
+  catch: vi.fn(),
   start: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn().mockResolvedValue(undefined),
   api: {
@@ -14,10 +15,16 @@ const mockBot = {
   },
 };
 
+const mockRunner = { stop: vi.fn().mockResolvedValue(undefined) };
+
 vi.mock('grammy', async () => {
   const actual = await vi.importActual<typeof import('grammy')>('grammy');
   return { ...actual, Bot: vi.fn(() => mockBot) };
 });
+
+vi.mock('@grammyjs/runner', () => ({
+  run: vi.fn(() => mockRunner),
+}));
 
 const { TelegramAdapter } = await import('../../src/adapters/telegram.js');
 const { PendingCritiqueState } = await import('../../src/telegram/critique-state.js');
