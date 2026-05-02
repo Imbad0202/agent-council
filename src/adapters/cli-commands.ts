@@ -116,6 +116,16 @@ export class CliCommandHandler {
         `Sealed segment ${result.segmentIndex}: ${result.metadata.decisionsCount} decision(s), ${result.metadata.openQuestionsCount} open question(s). Starting next segment.`,
       );
     } catch (err) {
+      // [v0.5.4 §4.9] Friendly user-facing messages for ResetCancelledError;
+      // fall through to generic message for other errors (existing behavior).
+      if (err instanceof ResetCancelledError) {
+        if (err.reason === 'user') {
+          this.print('Reset cancelled.');
+        } else {
+          this.print('Reset timed out (no facilitator response within 30s). Try again.');
+        }
+        return;
+      }
       this.print((err as Error).message);
     }
   }

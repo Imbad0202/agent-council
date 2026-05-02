@@ -303,3 +303,39 @@ describe('/councilcancel CLI handler (v0.5.4 §7.6a)', () => {
     expect(output).toContain('/councilcancel is not configured in this CLI session.');
   });
 });
+
+describe('/councilreset CLI catch-branch friendly messages (v0.5.4 §4.9)', () => {
+  it('councilReset catches ResetCancelledError(user) → prints "Reset cancelled." not raw message', async () => {
+    const sessionReset = { reset: vi.fn().mockRejectedValue(new ResetCancelledError('user')) };
+    const delib = makeDelibHandler();
+    const handler = new CliCommandHandler(
+      sessions, memDb, (line) => output.push(line),
+      {
+        sessionReset: sessionReset as never,
+        deliberationHandler: delib as never,
+        resetSnapshotDB: resetDb,
+        threadId: THREAD,
+      },
+    );
+    await handler.handleAsync('councilreset', '');
+    expect(output).toContain('Reset cancelled.');
+    // Regression guard: NOT the raw super(...) string
+    expect(output).not.toContain('Reset cancelled (reason: user)');
+  });
+
+  it('councilReset catches ResetCancelledError(timeout) → prints friendly timeout message', async () => {
+    const sessionReset = { reset: vi.fn().mockRejectedValue(new ResetCancelledError('timeout')) };
+    const delib = makeDelibHandler();
+    const handler = new CliCommandHandler(
+      sessions, memDb, (line) => output.push(line),
+      {
+        sessionReset: sessionReset as never,
+        deliberationHandler: delib as never,
+        resetSnapshotDB: resetDb,
+        threadId: THREAD,
+      },
+    );
+    await handler.handleAsync('councilreset', '');
+    expect(output).toContain('Reset timed out (no facilitator response within 30s). Try again.');
+  });
+});
