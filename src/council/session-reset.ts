@@ -76,6 +76,9 @@ export interface HandlerForReset {
   sealCurrentSegment(threadId: number, snapshotId: string): void;
   openNewSegment(threadId: number): void;
   unsealCurrentSegment(threadId: number): void;
+  // v0.5.4 §3.3 — per-thread reset controller (forwarded to DeliberationHandler)
+  getCurrentResetController(threadId: number): AbortController | null;
+  setCurrentResetController(threadId: number, controller: AbortController | null): void;
 }
 
 export interface FacilitatorForReset {

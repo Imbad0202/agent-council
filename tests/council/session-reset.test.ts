@@ -87,6 +87,8 @@ function makeHandler(init: {
       last.endedAt = null;
       last.snapshotId = null;
     }),
+    getCurrentResetController: vi.fn(() => null),
+    setCurrentResetController: vi.fn(),
   };
 }
 
