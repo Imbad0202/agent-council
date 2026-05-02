@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-05-02
+
 ### Added
 
 - `/councilcancel` command (CLI + Telegram) — abort an in-flight `/councilreset` operation. Surfaces `ResetCancelledError({reason: 'user' | 'timeout'})` in handler catch-branches with friendly user-facing messages ("Reset cancelled." or "Reset timed out (no facilitator response within 30s). Try again.").
