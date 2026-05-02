@@ -82,6 +82,7 @@ export interface FacilitatorForReset {
   respondDeterministic(
     messages: CouncilMessage[],
     role: 'synthesizer',
+    signal?: AbortSignal, // v0.5.4 additive — lockstep with AgentWorker (round-2 P2-r2-2)
   ): Promise<{ content: string }>;
 }
 

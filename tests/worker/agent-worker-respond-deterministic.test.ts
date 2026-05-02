@@ -113,3 +113,39 @@ describe('AgentWorker.respondDeterministic', () => {
     expect(res.modelUsed).toBe('claude-opus-4-7');
   });
 });
+
+describe('AgentWorker.respondDeterministic signal forwarding (v0.5.4 §3.1)', () => {
+  it('forwards optional signal into provider.chat options via spread-when-truthy', async () => {
+    const ctrl = new AbortController();
+    ctrl.abort();
+
+    const fakeProvider: LLMProvider = {
+      name: 'anthropic',
+      chat: vi.fn().mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+      summarize: vi.fn(),
+      estimateTokens: vi.fn().mockReturnValue(0),
+    };
+    const worker = new AgentWorker(agentConfig, fakeProvider, '/tmp/no-memory');
+
+    await expect(
+      worker.respondDeterministic([], 'synthesizer', ctrl.signal),
+    ).rejects.toThrow();
+
+    expect(fakeProvider.chat).toHaveBeenCalledTimes(1);
+    const chatOpts = (fakeProvider.chat as ReturnType<typeof vi.fn>).mock.calls[0][1] as ChatOptions;
+    expect(chatOpts.signal).toBe(ctrl.signal);
+  });
+
+  it('omits signal from provider.chat options when none passed', async () => {
+    const fakeProvider: LLMProvider = {
+      name: 'anthropic',
+      chat: vi.fn().mockResolvedValue({ content: 'ok', tokensUsed: { input: 1, output: 1 } }),
+      summarize: vi.fn(),
+      estimateTokens: vi.fn().mockReturnValue(0),
+    };
+    const worker = new AgentWorker(agentConfig, fakeProvider, '/tmp/no-memory');
+    await worker.respondDeterministic([], 'synthesizer');
+    const chatOpts = (fakeProvider.chat as ReturnType<typeof vi.fn>).mock.calls[0][1] as ChatOptions;
+    expect('signal' in chatOpts).toBe(false);
+  });
+});

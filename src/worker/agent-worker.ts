@@ -149,6 +149,7 @@ export class AgentWorker {
   async respondDeterministic(
     conversationHistory: CouncilMessage[],
     role: AgentRole,
+    signal?: AbortSignal, // v0.5.4 §3.1 optional signal forwarding
   ): Promise<ProviderResponse> {
     const { stable, volatile } = buildSystemPromptParts(this.config, this.memorySyncPath, role, false);
     const systemPrompt = `${stable}\n\n---\n\n${volatile}`;
@@ -173,6 +174,7 @@ export class AgentWorker {
       model,
       temperature: 0,
       systemPrompt,
+      ...(signal && { signal }), // v0.5.4 §3.1 spread-when-truthy — matches respond() convention
     });
 
     this.stats.responseCount++;
