@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { parseArtifact } from '../council/artifact-prompt.js';
 import { chunkMarkdown } from '../util/chunk-markdown.js';
 import type { ArtifactService } from '../council/artifact-service.js';
+import { ResetCancelledError } from '../council/session-reset-errors.js';
 
 export interface BlindReviewWiring {
   store: BlindReviewStore;
@@ -186,8 +187,41 @@ export function buildCouncilResetHandler(groupChatId: number, wiring: SessionRes
         `Sealed segment ${result.segmentIndex}: ${result.metadata.decisionsCount} decision(s), ${result.metadata.openQuestionsCount} open question(s). Starting next segment.`,
       );
     } catch (err) {
+      // [v0.5.4 §4.8] Friendly user-facing messages for ResetCancelledError;
+      // fall through to generic for other errors (existing behavior).
+      if (err instanceof ResetCancelledError) {
+        if (err.reason === 'user') {
+          await ctx.reply('Reset cancelled.');
+        } else {
+          await ctx.reply('Reset timed out (no facilitator response within 30s). Try again.');
+        }
+        return;
+      }
       await ctx.reply((err as Error).message);
     }
+  };
+}
+
+export function buildCouncilCancelHandler(groupChatId: number, wiring: SessionResetWiring) {
+  return async (ctx: Context) => {
+    if (ctx.chat?.id !== groupChatId) return;
+    if (ctx.from?.is_bot) return;
+    // [v0.5.4 §3.3 round-2 P2-r2-1 corrected wiring shape]
+    // SessionResetWiring shape is `{ db, reset?, deliberationHandler? }`.
+    // DB-only-without-facilitator wiring has reset/deliberationHandler undefined;
+    // surface "not configured" message instead of crashing on undefined.method.
+    if (!wiring.deliberationHandler) {
+      await ctx.reply('Reset cancellation requires a facilitator agent (not configured).');
+      return;
+    }
+    const threadId = resolveTelegramThreadId(ctx.message);
+    const ctrl = wiring.deliberationHandler.getCurrentResetController(threadId);
+    if (!ctrl) {
+      await ctx.reply('No reset in progress.');
+      return;
+    }
+    ctrl.abort(new ResetCancelledError('user'));
+    await ctx.reply('Reset cancelled.');
   };
 }
 
@@ -426,6 +460,7 @@ export class BotManager {
     // into the deliberation as ordinary text.
     if (sessionReset) {
       listenerBot.command('councilreset', buildCouncilResetHandler(this.groupChatId, sessionReset));
+      listenerBot.command('councilcancel', buildCouncilCancelHandler(this.groupChatId, sessionReset));
       listenerBot.command('councilhistory', buildCouncilHistoryHandler(this.groupChatId, sessionReset.db));
     }
 

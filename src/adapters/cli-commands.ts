@@ -5,6 +5,7 @@ import type { ResetSnapshotDB } from '../storage/reset-snapshot-db.js';
 import type { HandlerForReset } from '../council/session-reset.js';
 import type { ArtifactService } from '../council/artifact-service.js';
 import { parseArtifact } from '../council/artifact-prompt.js';
+import { ResetCancelledError } from '../council/session-reset-errors.js';
 
 type PrintFn = (line: string) => void;
 
@@ -31,6 +32,7 @@ export const CLI_COMMAND_NAMES: ReadonlySet<string> = new Set([
   'memory',
   'forget',
   'patterns',
+  'councilcancel',
   'councilreset',
   'councilhistory',
   'councildone',
@@ -92,6 +94,7 @@ export class CliCommandHandler {
   // commands so current callers don't need to touch an await.
   async handleAsync(command: string, args: string): Promise<void> {
     switch (command) {
+      case 'councilcancel': return this.councilCancel();
       case 'councilreset': return this.councilReset();
       case 'councilhistory': return this.councilHistory();
       case 'councildone': return this.councilDone(args);
@@ -113,8 +116,38 @@ export class CliCommandHandler {
         `Sealed segment ${result.segmentIndex}: ${result.metadata.decisionsCount} decision(s), ${result.metadata.openQuestionsCount} open question(s). Starting next segment.`,
       );
     } catch (err) {
+      // [v0.5.4 §4.9] Friendly user-facing messages for ResetCancelledError;
+      // fall through to generic message for other errors (existing behavior).
+      if (err instanceof ResetCancelledError) {
+        if (err.reason === 'user') {
+          this.print('Reset cancelled.');
+        } else {
+          this.print('Reset timed out (no facilitator response within 30s). Try again.');
+        }
+        return;
+      }
       this.print((err as Error).message);
     }
+  }
+
+  private councilCancel(): void {
+    const { sessionReset, deliberationHandler, threadId } = this.reset;
+    // Triple-check mirrors councilReset() at the guard above — catches
+    // DB-only-without-facilitator wiring (deliberationHandler === undefined)
+    // AND missing threadId misconfiguration. Per-adapter wording intentional
+    // (§3.3 round-6 P2-r6-4): CLI uses "in this CLI session" idiom mirroring
+    // councilReset()'s message.
+    if (!sessionReset || !deliberationHandler || threadId === undefined) {
+      this.print('/councilcancel is not configured in this CLI session.');
+      return;
+    }
+    const ctrl = deliberationHandler.getCurrentResetController(threadId);
+    if (!ctrl) {
+      this.print('No reset in progress.');
+      return;
+    }
+    ctrl.abort(new ResetCancelledError('user'));
+    this.print('Reset cancelled.');
   }
 
   private councilHistory(): void {

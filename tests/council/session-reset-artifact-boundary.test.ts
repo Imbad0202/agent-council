@@ -58,6 +58,9 @@ function makeStubHandler(messages: CouncilMessage[]) {
     sealCurrentSegment: () => {},
     openNewSegment: () => {},
     unsealCurrentSegment: () => {},
+    // v0.5.4 §3.3 — per-thread reset controller (forwarded to DeliberationHandler)
+    getCurrentResetController: () => null,
+    setCurrentResetController: () => {},
   };
 }
 

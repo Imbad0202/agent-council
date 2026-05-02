@@ -106,6 +106,10 @@ interface SessionState {
   // append new messages to a segment that /councildone is actively reading.
   // Cleared by ArtifactService after the LLM call (success or error).
   synthesisInFlight: boolean;
+  // v0.5.4 §3.3: AbortController for the currently in-flight reset on this
+  // thread. Stored per-thread on SessionState (NOT global on SessionReset) so
+  // that cancelling thread A's reset cannot abort thread B's reset.
+  currentResetController?: AbortController;
 }
 
 export class DeliberationHandler {
@@ -474,6 +478,19 @@ export class DeliberationHandler {
 
   public isDeliberationInFlight(threadId: number): boolean {
     return this.getSession(threadId).deliberationInFlight;
+  }
+
+  public getCurrentResetController(threadId: number): AbortController | null {
+    return this.getSession(threadId).currentResetController ?? null;
+  }
+
+  public setCurrentResetController(threadId: number, controller: AbortController | null): void {
+    const state = this.getSession(threadId);
+    if (controller === null) {
+      state.currentResetController = undefined;
+    } else {
+      state.currentResetController = controller;
+    }
   }
 
   public hasPendingClassifications(threadId: number): boolean {

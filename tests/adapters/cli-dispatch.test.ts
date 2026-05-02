@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { routeCliInput, deriveCliThreadId } from '../../src/adapters/cli-dispatch.js';
+import { CLI_COMMAND_NAMES } from '../../src/adapters/cli-commands.js';
 
 // Round-14 codex finding [P2-W]: CLI used to hard-code threadId: 0. Combined
 // with round-9's restart-safe getSnapshotPrefix DB fallback, that meant a
@@ -146,6 +147,20 @@ describe('routeCliInput', () => {
     await routeCliInput('   ', router as never, cliCmd as never, 0);
 
     expect(cliCmd.handleAsync).not.toHaveBeenCalled();
+    expect(router.handleHumanMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('/councilcancel CLI dispatch (v0.5.4 §7.6a)', () => {
+  it('CLI_COMMAND_NAMES contains councilcancel', () => {
+    expect(CLI_COMMAND_NAMES.has('councilcancel')).toBe(true);
+  });
+
+  it("routeCliInput('/councilcancel') dispatches via handleAsync, not router", async () => {
+    const cliCmd = { handleAsync: vi.fn() };
+    const router = { handleHumanMessage: vi.fn() };
+    await routeCliInput('/councilcancel', router as never, cliCmd as never, 7);
+    expect(cliCmd.handleAsync).toHaveBeenCalledWith('councilcancel', '');
     expect(router.handleHumanMessage).not.toHaveBeenCalled();
   });
 });

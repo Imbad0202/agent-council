@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-05-02
+
+### Added
+
+- `/councilcancel` command (CLI + Telegram) — abort an in-flight `/councilreset` operation. Surfaces `ResetCancelledError({reason: 'user' | 'timeout'})` in handler catch-branches with friendly user-facing messages ("Reset cancelled." or "Reset timed out (no facilitator response within 30s). Try again.").
+- 30-second operation-level timeout on `SessionReset.reset()`. Reset paths that previously hung indefinitely on a slow facilitator now fail with `ResetCancelledError({reason: 'timeout'})` after 30s, releasing `resetInFlight` and the controller. NOT per-attempt × retry — this is a single operation budget, since reset path does not use `invokeWithRetry` (v0.5.3 §0.1 user decision B preserved).
+- `awaitResetRace(summaryPromise, racePromise, signal)` exported helper in `session-reset.ts`. Wraps `Promise.race(...)` with reclassification: any throw exiting the race while `signal.aborted === true` is reclassified to `ResetCancelledError`. Closes round-1 P1-3 (SDK abort class wrapping) and round-2 P1-r2-1 (non-abort errors after cancel landed). Exported so unit tests pin its three branches deterministically (round-3 P1-r3-1 seam).
+- `ResetCancelledError extends Error` in `session-reset-errors.ts` with `reason: 'user' | 'timeout'` field. Adapter pattern: `if (err instanceof ResetCancelledError) { ... }` then branch on `reason`.
+- Per-thread `currentResetController?: AbortController` on `SessionState`; `DeliberationHandler.getCurrentResetController(threadId)` / `setCurrentResetController(threadId, ctrl | null)`. Thread isolation invariant: cancel from thread A cannot abort thread B (§2.4).
+- Telegram concurrent update dispatch via `@grammyjs/runner` (K1 routing). Replaces `bot.start()` (sequential dispatch — `node_modules/grammy/out/bot.js:189`) with `run(bot)` (concurrent default). Without this, mid-reset `/councilcancel` would queue behind the in-flight reset handler and never fire (round-4 P1-r4-1).
+
+### Changed
+
+- `AgentWorker.respondDeterministic(messages, role, signal?)` — additive 3rd-positional `signal?: AbortSignal` parameter. Forwarded into `provider.chat({ ..., ...(signal && { signal }) })` via spread-when-truthy convention.
+- `FacilitatorForReset.respondDeterministic` interface in lockstep (same signature change). Required because `SessionReset.reset()` passes `merged` as the third argument.
+- `SessionReset.reset(handler, threadId, options?: { signal?: AbortSignal })` — additive third options bag. Body wrapped in `Promise.race([summaryPromise, racePromise])` with single-timer race+abort pattern (v0.5.3 §5.1 site 5 verbatim). Two-level try/finally: outer clears `resetInFlight`; inner clears timer + `currentResetController`.
+- `TelegramAdapter.start()` no longer awaits `bot.start()` (which was a long-lived blocking promise in grammY). Now: race-safe wrapper caches `startPromise`; private `startInner()` does setupListener + deleteWebhook + conflict-retry + `bot.catch(...)` install + `run(listenerBot)`. Adapter.start() FAST-RESOLVES like CLI (`cli.ts:76-91`). Runner's polling timer keeps process alive same way readline holds stdin.
+- `TelegramAdapter.stop()` uses `runner.stop()` instead of `bot.stop()`; clears both `runner` and `startPromise` on success for restart pattern. Stop-before-start is a safe no-op via `if (!this.runner) return;` guard.
+
+### Behavior
+
+- `/councilreset` that user cancels mid-flight: under v0.5.3, the user typed `/councilcancel` but it queued behind the reset (Telegram only) or was a no-op (CLI). Under v0.5.4, the cancel takes effect immediately on both adapters; reset rejects with `ResetCancelledError(user)`; handler replies "Reset cancelled."
+- `/councilreset` against a hung facilitator (e.g. provider has stalled): under v0.5.3, the operation could lock `resetInFlight=true` indefinitely. Under v0.5.4, the 30s operation timeout fires; reset rejects with `ResetCancelledError(timeout)`; handler replies "Reset timed out ... Try again."
+- DB-only-without-facilitator wiring (no facilitator agent configured): `/councilcancel` registers as a command but its handler replies "Reset cancellation requires a facilitator agent (not configured)." (Telegram) or "/councilcancel is not configured in this CLI session." (CLI). Per-adapter wording intentionally different — CLI mirrors `councilReset()` idiom at `:107`.
+
+### Notes
+
+- v0.5.4 does NOT extend cancellation to `summarize()` / IntentGate / dispatcher / memory layer / artifact synthesis. Those are deferred to v0.5.5+ (system-level cancellation primitive that requires thread-level controller architecture, not mechanical signal threading).
+- Spec: `docs/superpowers/specs/2026-05-02-v0.5.4-reset-cancellation-design.md` (1307 lines, 10 codex review rounds, 2-consecutive-0-P1 gate passed).
+
 ## [0.5.3] - 2026-04-29
 
 ### Added
