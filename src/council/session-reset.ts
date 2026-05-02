@@ -19,7 +19,7 @@ import {
 } from './session-reset-errors.js';
 import { computeNextSegmentIndex } from './segment-counter.js';
 import { effectiveResetSnapshots } from './effective-reset-snapshots.js';
-import { TimeoutReason } from '../abort-utils.js';
+import { mergeSignals, TimeoutReason } from '../abort-utils.js';
 
 const RESET_OPERATION_TIMEOUT_MS = 30_000;
 
@@ -103,7 +103,11 @@ export class SessionReset {
     private facilitator: FacilitatorForReset,
   ) {}
 
-  async reset(handler: HandlerForReset, threadId: number): Promise<ResetResult> {
+  async reset(
+    handler: HandlerForReset,
+    threadId: number,
+    options?: { signal?: AbortSignal },
+  ): Promise<ResetResult> {
     // Guard order matters: empty-segment first because it's the permanent
     // "nothing to reset" state — no point telling the user "a blind-review
     // is pending, try later" if retrying will still find zero turns to
@@ -154,132 +158,196 @@ export class SessionReset {
       throw new ResetInProgressError(threadId);
     }
 
+    // === v0.5.4 race+abort wrap (§4.1) ===
     handler.setResetInFlight(threadId, true);
     try {
-      const messages = handler.getCurrentSegmentMessages(threadId);
+      const operationCtrl = new AbortController();
+      const merged = mergeSignals(options?.signal, operationCtrl.signal)!;
+      // merged is always non-null because operationCtrl.signal is always present.
 
-      // Round-8 codex finding [P1]: after the first reset, the prior segment
-      // exists only as a DB snapshot. If we only feed the current-segment
-      // messages to the facilitator, the second /councilreset summary silently
-      // drops decisions/open questions from every earlier sealed segment.
-      // Prepend the existing snapshot markdowns as a single synthetic human
-      // message so the facilitator keeps rolling every prior sealed summary
-      // forward into the next one.
-      //
-      // v0.5.2.a codex round-5 P2: use effectiveResetSnapshots so any reset
-      // SUPERSEDED by a later /councildone artifact is dropped. Spec §0:
-      // /councildone is a closing primitive; pre-artifact reset content
-      // must NOT leak into post-artifact /councilreset prior-summary blocks.
-      const existing = effectiveResetSnapshots(threadId, this.db, this.artifactDb);
-      const priorSummariesMsg: CouncilMessage | null =
-        existing.length > 0
-          ? {
-              id: `reset-prior-summaries-${Date.now()}`,
-              role: 'human',
-              content: buildPriorSummariesBlock(existing),
-              timestamp: Date.now(),
-              threadId,
+      // [P1-2 fix / R0] Pre-check BEFORE constructing summaryPromise.
+      // Async function bodies run synchronously up to the first await, so a
+      // summaryPromise constructed before this check would call provider.chat
+      // before the race could reject.
+      if (merged.aborted) {
+        throw classifyAbort(merged.reason);
+      }
+
+      handler.setCurrentResetController(threadId, operationCtrl);
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        // === summaryPromise body — existing reset body, with 2 changes ===
+        //   (a) respondDeterministic forwards `merged` (signal forwarding)
+        //   (b) [P1-1 fix / R1'] post-await abort gate before validation/persist
+        const summaryPromise = (async (): Promise<ResetResult> => {
+          const messages = handler.getCurrentSegmentMessages(threadId);
+
+          // Round-8 codex finding [P1]: after the first reset, the prior segment
+          // exists only as a DB snapshot. If we only feed the current-segment
+          // messages to the facilitator, the second /councilreset summary silently
+          // drops decisions/open questions from every earlier sealed segment.
+          // Prepend the existing snapshot markdowns as a single synthetic human
+          // message so the facilitator keeps rolling every prior sealed summary
+          // forward into the next one.
+          //
+          // v0.5.2.a codex round-5 P2: use effectiveResetSnapshots so any reset
+          // SUPERSEDED by a later /councildone artifact is dropped. Spec §0:
+          // /councildone is a closing primitive; pre-artifact reset content
+          // must NOT leak into post-artifact /councilreset prior-summary blocks.
+          const existing = effectiveResetSnapshots(threadId, this.db, this.artifactDb);
+          const priorSummariesMsg: CouncilMessage | null =
+            existing.length > 0
+              ? {
+                  id: `reset-prior-summaries-${Date.now()}`,
+                  role: 'human',
+                  content: buildPriorSummariesBlock(existing),
+                  timestamp: Date.now(),
+                  threadId,
+                }
+              : null;
+
+          const promptBody = buildResetSummaryPrompt({
+            topic: handler.getCurrentTopic(threadId),
+            turnsInSegment: messages.length,
+          });
+          const summaryMsg: CouncilMessage = {
+            id: `reset-summary-${Date.now()}`,
+            role: 'human',
+            content: promptBody,
+            timestamp: Date.now(),
+            threadId,
+          };
+
+          const facilitatorMessages: CouncilMessage[] = [
+            ...(priorSummariesMsg ? [priorSummariesMsg] : []),
+            ...messages,
+            summaryMsg,
+          ];
+          const response = await this.facilitator.respondDeterministic(
+            facilitatorMessages,
+            'synthesizer',
+            merged,                        // ← signal forwarding (§3.1)
+          );
+
+          // [P1-1 fix / R1'] If cancel/timeout landed while LLM was in flight,
+          // refuse to commit even if the SDK happened to return a complete
+          // response before honoring the abort. Without this gate, a slow-to-
+          // honor SDK can let the cancelled reset commit DB+segment state
+          // AFTER cleanup ran — a background-write bug.
+          if (merged.aborted) {
+            throw classifyAbort(merged.reason);
+          }
+
+          const summaryMarkdown = response.content;
+
+          // Round-16 codex finding [P2-VALIDATION]: validate the structural
+          // contract BEFORE persist. parseSummaryMetadata silently returns 0/0
+          // for malformed input, which would commit a bad snapshot row that
+          // /councilhistory then surfaces as wrong AND every future
+          // /councilreset on the thread carries forward via
+          // buildPriorSummariesBlock. Throwing here triggers the existing
+          // rollback semantics (no DB write happens after this point if we
+          // throw) and leaves the thread retry-safe — the user can re-run
+          // /councilreset and the facilitator's next response gets validated
+          // again.
+          const validation = validateResetSummaryMarkdown(summaryMarkdown);
+          if (!validation.valid) {
+            throw new MalformedResetSummaryError(validation.missingSections);
+          }
+
+          const parsed = parseSummaryMetadata(summaryMarkdown);
+          const snapshotId = randomUUID();
+
+          // segmentIndex is persisted as a monotonically-increasing DB metadata
+          // column. v0.5.2.a: computeNextSegmentIndex checks BOTH reset_snapshots
+          // and council_artifacts so the counter stays monotonic across /councilreset
+          // and /councildone seals, surviving process restarts regardless of which
+          // seal mechanism last ran.
+          const segmentIndex = computeNextSegmentIndex(
+            threadId, this.db, this.artifactDb, handler,
+          );
+
+          const snapshot: ResetSnapshot = {
+            snapshotId,
+            threadId,
+            segmentIndex,
+            sealedAt: new Date().toISOString(),
+            summaryMarkdown,
+            metadata: {
+              decisionsCount: parsed.decisionsCount,
+              openQuestionsCount: parsed.openQuestionsCount,
+              blindReviewSessionId: null,
+            },
+          };
+
+          this.db.recordSnapshot(snapshot);
+
+          // Synchronous block: codex round-1 verified no await between
+          // recordSnapshot and openNewSegment, so race rejection cannot
+          // preempt this block.
+          //
+          // Seal first. If it fails, no in-memory mutation has happened yet —
+          // just roll back the DB row.
+          try {
+            handler.sealCurrentSegment(threadId, snapshotId);
+          } catch (sealErr) {
+            this.safeDeleteSnapshot(snapshotId, sealErr);
+            throw sealErr;
+          }
+
+          // Segment is now sealed in memory. If open fails, we must unseal to
+          // prevent runDeliberation from writing into a sealed segment, then
+          // roll back the DB row.
+          try {
+            handler.openNewSegment(threadId);
+          } catch (openErr) {
+            try {
+              handler.unsealCurrentSegment(threadId);
+            } catch {
+              // Best-effort — if unseal also fails the thread is already
+              // corrupt, but we still want to surface the open error.
             }
-          : null;
+            this.safeDeleteSnapshot(snapshotId, openErr);
+            throw openErr;
+          }
 
-      const promptBody = buildResetSummaryPrompt({
-        topic: handler.getCurrentTopic(threadId),
-        turnsInSegment: messages.length,
-      });
-      const summaryMsg: CouncilMessage = {
-        id: `reset-summary-${Date.now()}`,
-        role: 'human',
-        content: promptBody,
-        timestamp: Date.now(),
-        threadId,
-      };
+          return {
+            snapshotId,
+            summaryMarkdown,
+            metadata: snapshot.metadata,
+            segmentIndex,
+          };
+        })();
 
-      const facilitatorMessages: CouncilMessage[] = [
-        ...(priorSummariesMsg ? [priorSummariesMsg] : []),
-        ...messages,
-        summaryMsg,
-      ];
-      const response = await this.facilitator.respondDeterministic(
-        facilitatorMessages,
-        'synthesizer',
-      );
+        const racePromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            // Single timer drives BOTH abort and reject (v0.5.3 §5.1 site 5).
+            // Reject synchronously before abort so race winner is deterministic.
+            reject(new ResetCancelledError('timeout'));
+            operationCtrl.abort(new TimeoutReason(RESET_OPERATION_TIMEOUT_MS));
+          }, RESET_OPERATION_TIMEOUT_MS);
 
-      const summaryMarkdown = response.content;
+          // External cancel path: user-fired controller.abort() must also reject.
+          // (merged.aborted at function entry was handled by the early-throw above.)
+          merged.addEventListener('abort', () => {
+            reject(classifyAbort(merged.reason));
+          }, { once: true });
+        });
 
-      // Round-16 codex finding [P2-VALIDATION]: validate the structural
-      // contract BEFORE persist. parseSummaryMetadata silently returns 0/0
-      // for malformed input, which would commit a bad snapshot row that
-      // /councilhistory then surfaces as wrong AND every future
-      // /councilreset on the thread carries forward via
-      // buildPriorSummariesBlock. Throwing here triggers the existing
-      // rollback semantics (no DB write happens after this point if we
-      // throw) and leaves the thread retry-safe — the user can re-run
-      // /councilreset and the facilitator's next response gets validated
-      // again.
-      const validation = validateResetSummaryMarkdown(summaryMarkdown);
-      if (!validation.valid) {
-        throw new MalformedResetSummaryError(validation.missingSections);
+        // Delegate to awaitResetRace helper (round-3 P1-r3-1 — exported helper
+        // is the regression seam; tests in tests/council/await-reset-race.test.ts
+        // pin its three branches).
+        return await awaitResetRace(summaryPromise, racePromise, merged);
+      } finally {
+        // Inner cleanup: clear timer FIRST (so any late-firing setTimeout
+        // callback doesn't run after controller is null), then clear controller.
+        if (timer) clearTimeout(timer);
+        handler.setCurrentResetController(threadId, null);
       }
-
-      const parsed = parseSummaryMetadata(summaryMarkdown);
-      const snapshotId = randomUUID();
-
-      // segmentIndex is persisted as a monotonically-increasing DB metadata
-      // column. v0.5.2.a: computeNextSegmentIndex checks BOTH reset_snapshots
-      // and council_artifacts so the counter stays monotonic across /councilreset
-      // and /councildone seals, surviving process restarts regardless of which
-      // seal mechanism last ran.
-      const segmentIndex = computeNextSegmentIndex(
-        threadId, this.db, this.artifactDb, handler,
-      );
-
-      const snapshot: ResetSnapshot = {
-        snapshotId,
-        threadId,
-        segmentIndex,
-        sealedAt: new Date().toISOString(),
-        summaryMarkdown,
-        metadata: {
-          decisionsCount: parsed.decisionsCount,
-          openQuestionsCount: parsed.openQuestionsCount,
-          blindReviewSessionId: null,
-        },
-      };
-
-      this.db.recordSnapshot(snapshot);
-
-      // Seal first. If it fails, no in-memory mutation has happened yet —
-      // just roll back the DB row.
-      try {
-        handler.sealCurrentSegment(threadId, snapshotId);
-      } catch (sealErr) {
-        this.safeDeleteSnapshot(snapshotId, sealErr);
-        throw sealErr;
-      }
-
-      // Segment is now sealed in memory. If open fails, we must unseal to
-      // prevent runDeliberation from writing into a sealed segment, then
-      // roll back the DB row.
-      try {
-        handler.openNewSegment(threadId);
-      } catch (openErr) {
-        try {
-          handler.unsealCurrentSegment(threadId);
-        } catch {
-          // Best-effort — if unseal also fails the thread is already
-          // corrupt, but we still want to surface the open error.
-        }
-        this.safeDeleteSnapshot(snapshotId, openErr);
-        throw openErr;
-      }
-
-      return {
-        snapshotId,
-        summaryMarkdown,
-        metadata: snapshot.metadata,
-        segmentIndex,
-      };
     } finally {
+      // Outer cleanup: clear flag last so a second /councilcancel arriving
+      // during cleanup never sees `resetInFlight=false` AND a non-null
+      // controller simultaneously (round-1 P2-2 ordering).
       handler.setResetInFlight(threadId, false);
     }
   }
