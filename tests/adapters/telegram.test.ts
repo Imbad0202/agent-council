@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { run } from '@grammyjs/runner';
 import type { AgentConfig } from '../../src/types.js';
 import type { InputAdapter, OutputAdapter } from '../../src/adapters/types.js';
 
@@ -199,12 +200,16 @@ describe('TelegramAdapter', () => {
       expect(mockBot.api.raw.getUpdates).toHaveBeenCalled();
     });
 
-    it('calls bot.start with drop_pending_updates', async () => {
+    it('calls run(bot) for concurrent dispatch (v0.5.4 §3.5)', async () => {
       const adapter = makeAdapter();
       await adapter.start(vi.fn());
-      expect(mockBot.start).toHaveBeenCalledWith(
-        expect.objectContaining({ drop_pending_updates: true }),
-      );
+      expect(run).toHaveBeenCalledWith(mockBot);
+    });
+
+    it('installs bot.catch() before run() (v0.5.4 §3.5 Step 5)', async () => {
+      const adapter = makeAdapter();
+      await adapter.start(vi.fn());
+      expect(mockBot.catch).toHaveBeenCalled();
     });
 
     it('registers message:text listener via bot.on', async () => {
@@ -285,10 +290,20 @@ describe('TelegramAdapter', () => {
 
   // -------------------------------------------------------------------------
   describe('stop()', () => {
-    it('calls bot.stop on the listener bot', async () => {
+    it('calls runner.stop after start (v0.5.4 §3.5 Step 3 — realistic shutdown path)', async () => {
+      // [round-9 P2-r9-2] Test contract change: call start() first so this.runner
+      // is set, then stop(). The earlier 'stop without start' pattern is now
+      // a silent no-op via the if (!this.runner) return guard.
       const adapter = makeAdapter();
+      await adapter.start(vi.fn());
       await adapter.stop();
-      expect(mockBot.stop).toHaveBeenCalled();
+      expect(mockRunner.stop).toHaveBeenCalled();
+    });
+
+    it('stop-before-start is safe no-op (v0.5.4 round-6 P1-r6-1 guard)', async () => {
+      const adapter = makeAdapter();
+      await expect(adapter.stop()).resolves.toBeUndefined();
+      expect(mockRunner.stop).not.toHaveBeenCalled();
     });
   });
 });
