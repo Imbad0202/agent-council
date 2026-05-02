@@ -69,6 +69,8 @@ function makeDelibHandler() {
     sealCurrentSegment: vi.fn(),
     openNewSegment: vi.fn(),
     unsealCurrentSegment: vi.fn(),
+    getCurrentResetController: vi.fn(() => null),
+    setCurrentResetController: vi.fn(),
   };
 }
 
