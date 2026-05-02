@@ -6,6 +6,7 @@ import {
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
 import { ArtifactDB } from '../../src/council/artifact-db.js';
 import { SessionReset } from '../../src/council/session-reset.js';
+import { ResetCancelledError } from '../../src/council/session-reset-errors.js';
 
 const GROUP = 100;
 const THREAD = 555;
@@ -237,5 +238,32 @@ describe('/councilhistory Telegram', () => {
     await fn(ctx as never);
 
     expect(ctx.reply).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildCouncilResetHandler catch-branch friendly messages (v0.5.4 §4.8)', () => {
+  it('catches ResetCancelledError(user) → replies "Reset cancelled." not raw message', async () => {
+    const wiring = {
+      db: {} as never,
+      reset: { reset: vi.fn().mockRejectedValue(new ResetCancelledError('user')) } as never,
+      deliberationHandler: makeDelibHandler() as never,
+    };
+    const handler = buildCouncilResetHandler(GROUP, wiring);
+    const ctx = makeCtx(GROUP);
+    await handler(ctx as never);
+    expect(ctx.reply).toHaveBeenCalledWith('Reset cancelled.');
+    expect(ctx.reply).not.toHaveBeenCalledWith('Reset cancelled (reason: user)');
+  });
+
+  it('catches ResetCancelledError(timeout) → replies friendly timeout message', async () => {
+    const wiring = {
+      db: {} as never,
+      reset: { reset: vi.fn().mockRejectedValue(new ResetCancelledError('timeout')) } as never,
+      deliberationHandler: makeDelibHandler() as never,
+    };
+    const handler = buildCouncilResetHandler(GROUP, wiring);
+    const ctx = makeCtx(GROUP);
+    await handler(ctx as never);
+    expect(ctx.reply).toHaveBeenCalledWith('Reset timed out (no facilitator response within 30s). Try again.');
   });
 });
