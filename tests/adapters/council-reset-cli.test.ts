@@ -8,6 +8,7 @@ import { MemoryDB } from '../../src/memory/db.js';
 import { ResetSnapshotDB } from '../../src/storage/reset-snapshot-db.js';
 import { ArtifactDB } from '../../src/council/artifact-db.js';
 import { SessionReset } from '../../src/council/session-reset.js';
+import { ResetCancelledError } from '../../src/council/session-reset-errors.js';
 
 const THREAD = 7;
 
@@ -245,5 +246,60 @@ describe('/councilhistory CLI', () => {
     await handler.handleAsync('councilreset', '');
     expect(output).toHaveLength(1);
     expect(output[0]).toMatch(/not configured/i);
+  });
+});
+
+describe('/councilcancel CLI handler (v0.5.4 §7.6a)', () => {
+  it('handleAsync(councilcancel) routes to councilCancel()', async () => {
+    const facilitator = makeFacilitator(VALID_SUMMARY);
+    const sessionReset = new SessionReset(resetDb, artifactDb, facilitator as never);
+    const delib = makeDelibHandler();
+    const handler = new CliCommandHandler(
+      sessions, memDb, (line) => output.push(line),
+      { sessionReset, deliberationHandler: delib as never, resetSnapshotDB: resetDb, threadId: THREAD },
+    );
+    const cancelSpy = vi.spyOn(handler as never, 'councilCancel');
+    await handler.handleAsync('councilcancel', '');
+    expect(cancelSpy).toHaveBeenCalled();
+  });
+
+  it('councilCancel with active reset → aborts controller, prints "Reset cancelled."', async () => {
+    const ctrl = new AbortController();
+    const sessionReset = new SessionReset(resetDb, artifactDb, makeFacilitator(VALID_SUMMARY) as never);
+    const delib = {
+      ...makeDelibHandler(),
+      getCurrentResetController: vi.fn(() => ctrl),
+    };
+    const handler = new CliCommandHandler(
+      sessions, memDb, (line) => output.push(line),
+      { sessionReset, deliberationHandler: delib as never, resetSnapshotDB: resetDb, threadId: THREAD },
+    );
+    await handler.handleAsync('councilcancel', '');
+    expect(ctrl.signal.aborted).toBe(true);
+    expect(output).toContain('Reset cancelled.');
+  });
+
+  it('councilCancel with no reset in progress → prints "No reset in progress."', async () => {
+    const sessionReset = new SessionReset(resetDb, artifactDb, makeFacilitator(VALID_SUMMARY) as never);
+    const delib = {
+      ...makeDelibHandler(),
+      getCurrentResetController: vi.fn(() => null),
+    };
+    const handler = new CliCommandHandler(
+      sessions, memDb, (line) => output.push(line),
+      { sessionReset, deliberationHandler: delib as never, resetSnapshotDB: resetDb, threadId: THREAD },
+    );
+    await handler.handleAsync('councilcancel', '');
+    expect(output).toContain('No reset in progress.');
+  });
+
+  it('councilCancel with DB-only-without-facilitator wiring → prints "not configured" message', async () => {
+    // No sessionReset, no deliberationHandler — DB-only deployment
+    const handler = new CliCommandHandler(
+      sessions, memDb, (line) => output.push(line),
+      { resetSnapshotDB: resetDb, threadId: THREAD },
+    );
+    await handler.handleAsync('councilcancel', '');
+    expect(output).toContain('/councilcancel is not configured in this CLI session.');
   });
 });
