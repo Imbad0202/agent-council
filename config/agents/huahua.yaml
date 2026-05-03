@@ -1,6 +1,14 @@
 id: huahua
 name: 花花
 provider: openai
+# Pinned to gpt-5.4. gpt-5.5 GA on 2026-04-24 (model id `gpt-5.5`,
+# pricing 2x: input $5/1M vs $2.50/1M, output $30/1M vs $15/1M).
+# Decision: huahua's role is debater, not reasoning-heavy — 5.5's
+# coding/professional-work uplift is low-leverage here, and council
+# token throughput makes a 2x bill increase the dominant cost factor.
+# Re-evaluate around 2026-05-17 (≥2 weeks of codex CLI 0.128 dogfood
+# at gpt-5.5 default — that's a free A/B signal). See harness-retirement
+# audit 2026-05-03 finding F-002 (`audits/harness-retirement-2026-05-03.md`).
 model: gpt-5.4
 bot_token_env: TELEGRAM_BOT_TOKEN_HUAHUA
 topics: [architecture, code, strategy, general]
