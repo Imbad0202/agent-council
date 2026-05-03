@@ -22,7 +22,7 @@ export function buildResetSummaryPrompt(input: ResetSummaryPromptInput): string 
     `## Blind-Review State`,
     `Free text: current agent tier assignments, PVG rotation state, or "none".`,
     ``,
-    `Output the markdown only. No preamble, no closing remarks.`,
+    `Begin output with \`## Decisions\`. End output with the last bullet under \`## Blind-Review State\`.`,
   ].join('\n');
 }
 

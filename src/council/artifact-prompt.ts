@@ -22,7 +22,7 @@ List unresolved questions that surfaced.
 
 One concrete action to take next.
 
-The ## TL;DR section is mandatory. Output ONLY this markdown — no preamble, no commentary.`;
+The ## TL;DR section is mandatory. Begin output with \`## TL;DR\`. End output with the last list item under \`## Suggested next step\`.`;
 
 const DECISION_SYSTEM = `You are an artifact synthesizer. Read the council deliberation transcript and produce a structured decision memo.
 
@@ -48,7 +48,7 @@ What is sacrificed by the recommendation.
 
 One concrete action to take next.
 
-The ## TL;DR section is mandatory. Output ONLY this markdown — no preamble, no commentary.`;
+The ## TL;DR section is mandatory. Begin output with \`## TL;DR\`. End output with the last list item under \`## Suggested next step\`.`;
 
 export function buildArtifactPrompt(
   preset: Preset,
