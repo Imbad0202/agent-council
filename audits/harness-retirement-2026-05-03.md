@@ -225,8 +225,8 @@ These were category candidates but filtered out during the audit. Listed so the 
 |---------|--------|--------|----------|
 | F-001 | pending | — | — |
 | F-002 | pending (need GA verify) | — | — |
-| F-003 | accepted → applied | (this commit) | 1000/1000 tests pass |
-| F-004 | accepted → applied | (this commit) | 1000/1000 tests pass |
+| F-003 | accepted → applied | `4c23e14` | 1000/1000 tests pass |
+| F-004 | accepted → applied | `4c23e14` | 1000/1000 tests pass |
 | F-005 | deferred (sample council.db first) | — | — |
 | F-006 | deferred (blind-review A/B first) | — | — |
 | F-007 | pending | — | — |
