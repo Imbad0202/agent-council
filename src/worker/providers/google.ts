@@ -23,7 +23,7 @@ export class GoogleProvider extends BaseProvider {
       model: options.model,
       contents,
       config: {
-        maxOutputTokens: options.maxTokens ?? 2048,
+        maxOutputTokens: options.maxTokens ?? 8192,
         temperature: options.temperature ?? 0.7,
         systemInstruction: options.systemPrompt,
         ...(options.signal && { abortSignal: options.signal }),

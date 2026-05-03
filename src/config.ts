@@ -42,9 +42,25 @@ export function loadAgentConfig(filePath: string): AgentConfig {
   };
 }
 
+// F-001 (harness-retirement audit 2026-05-03): single override point for the
+// system-model fallback. Resolution order is yaml > env > literal so ops can
+// bump the default by editing council.yaml without touching code, with
+// AGENT_COUNCIL_DEFAULT_SYSTEM_MODEL as a per-deploy override that doesn't
+// require a config edit. The literal in constants.ts is the last-resort floor
+// (and remains the test-default for class-level constructor params).
+function resolveSystemModelDefault(parsed: { system_models?: { default?: string } }): string {
+  return (
+    parsed.system_models?.default
+    ?? process.env.AGENT_COUNCIL_DEFAULT_SYSTEM_MODEL
+    ?? DEFAULT_SYSTEM_MODEL
+  );
+}
+
 export function loadCouncilConfig(filePath: string): CouncilConfig {
   const raw = readFileSync(filePath, 'utf-8');
   const parsed = parse(raw);
+
+  const systemModelDefault = resolveSystemModelDefault(parsed);
 
   return {
     gateway: {
@@ -73,7 +89,7 @@ export function loadCouncilConfig(filePath: string): CouncilConfig {
     },
     antiPattern: {
       enabled: parsed.anti_pattern?.enabled ?? true,
-      detectionModel: parsed.anti_pattern?.detection_model ?? DEFAULT_SYSTEM_MODEL,
+      detectionModel: parsed.anti_pattern?.detection_model ?? systemModelDefault,
       startAfterTurn: parsed.anti_pattern?.start_after_turn ?? 3,
       detectEveryNTurns: parsed.anti_pattern?.detect_every_n_turns ?? 2,
     },
@@ -91,8 +107,8 @@ export function loadCouncilConfig(filePath: string): CouncilConfig {
       repoPath: parsed.execution.repo_path ?? '.',
     } : undefined,
     systemModels: {
-      intentClassification: parsed.system_models?.intent_classification ?? DEFAULT_SYSTEM_MODEL,
-      taskDecomposition: parsed.system_models?.task_decomposition ?? DEFAULT_SYSTEM_MODEL,
+      intentClassification: parsed.system_models?.intent_classification ?? systemModelDefault,
+      taskDecomposition: parsed.system_models?.task_decomposition ?? systemModelDefault,
     },
   };
 }

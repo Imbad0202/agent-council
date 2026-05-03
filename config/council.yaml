@@ -53,5 +53,10 @@ execution:
   repo_path: .
 
 system_models:
+  # `default` is the single override point for system tasks (intent classification,
+  # task decomposition, anti-pattern detection). Resolution order:
+  #   per-field yaml > system_models.default > env AGENT_COUNCIL_DEFAULT_SYSTEM_MODEL
+  #   > DEFAULT_SYSTEM_MODEL literal in src/constants.ts
+  default: claude-sonnet-4-6
   intent_classification: claude-sonnet-4-6
   task_decomposition: claude-sonnet-4-6
