@@ -224,7 +224,7 @@ These were category candidates but filtered out during the audit. Listed so the 
 | Finding | Action | Commit | Verified |
 |---------|--------|--------|----------|
 | F-001 | accepted (option 2 hybrid) → applied | `fcb9068` | 1006/1006 tests pass; 6 new TDD tests for fallback chain |
-| F-002 | deferred (observation window) → annotated | `0120abe` | gpt-5.5 GA verified 2026-04-24; pin at 5.4 documented in huahua.yaml; re-evaluate 2026-05-17 |
+| F-002 | accepted → applied (gpt-5.5 bumped, pin reversed same day) | `0120abe` (pin annotation) → (this PR) bumped to gpt-5.5 | 2026-05-03 same-day reversal: maintainer set "always-latest model" policy in CONTRIBUTING.md; cost concern overridden by drift-prevention principle; codex CLI 0.128 dogfood treated as ambient A/B signal |
 | F-003 | accepted → applied | `4c23e14` | 1000/1000 tests pass |
 | F-004 | accepted → applied | `4c23e14` | 1000/1000 tests pass |
 | F-005 | deferred (sample council.db first) | — | — |
