@@ -223,13 +223,13 @@ These were category candidates but filtered out during the audit. Listed so the 
 
 | Finding | Action | Commit | Verified |
 |---------|--------|--------|----------|
-| F-001 | pending | — | — |
+| F-001 | accepted (option 2 hybrid) → applied | `fcb9068` | 1006/1006 tests pass; 6 new TDD tests for fallback chain |
 | F-002 | pending (need GA verify) | — | — |
 | F-003 | accepted → applied | `4c23e14` | 1000/1000 tests pass |
 | F-004 | accepted → applied | `4c23e14` | 1000/1000 tests pass |
 | F-005 | deferred (sample council.db first) | — | — |
 | F-006 | deferred (blind-review A/B first) | — | — |
-| F-007 | pending | — | — |
+| F-007 | accepted (raise to 8192, custom.ts kept at 2048) → applied | `fcb9068` | 1006/1006 tests pass; no test pinned 2048 |
 
 ---
 
